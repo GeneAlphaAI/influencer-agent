@@ -1,5 +1,6 @@
 from fastapi.responses import FileResponse
 from fastapi import Request, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 from utils.mongo_service import  check_tweet_exists, create_or_update_user_with_agent, get_all_unique_accounts_from_all_users, get_all_unique_x_influencers_ids, get_influencer_account_by_username, get_user_agents,save_account_info , save_tweet
@@ -8,7 +9,7 @@ from utils.gpt_client import tweet_analysis
 from datetime import datetime
 import logging
 from typing import Optional
-from config import PORT, HOST, VERSION
+from config import PORT, HOST, VERSION, Allowed_Origins
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 scheduler = AsyncIOScheduler()
@@ -18,6 +19,17 @@ app = FastAPI(
     description="Influencer Agent API",
     version=VERSION
 )
+
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=Allowed_Origins, 
+    allow_credentials=True,
+    allow_methods=["*"],  
+    allow_headers=["*"],  
+)
+
 
 class QueryRequest(BaseModel):
     query: str
@@ -223,7 +235,6 @@ async def get_unique_accounts_route():
     except Exception as error:
         logging.error(f"Failed to fetch unique accounts: {error}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)
