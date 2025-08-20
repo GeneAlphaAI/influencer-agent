@@ -1,0 +1,38 @@
+pipeline {
+    agent any
+
+    environment {
+        DEPLOY_DIR   = '/opt/influencer-agent'
+        BRANCH       = 'production'
+        SERVICE_NAME = 'influencer-agent'
+        REMOTE_USER  = 'ubuntu'
+        REMOTE_HOST  = '13.218.245.191'
+    }
+
+    stages {
+        stage('Deploy') {
+            steps {
+                sshagent(['Genealpha-Frontend-credentials']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} <<EOF
+                        echo "Connected to server"
+
+                        # Pull latest code from the production branch
+                        cd ${DEPLOY_DIR}
+                        git checkout ${BRANCH}
+                        git pull origin ${BRANCH}
+
+                        # Stop and remove the specific container
+                        sudo docker-compose stop ${SERVICE_NAME}
+                        sudo docker-compose rm -f ${SERVICE_NAME}
+
+                        # Rebuild and start the specific container
+                        sudo docker-compose up --build -d ${SERVICE_NAME}
+                        EOF
+                    """
+                }
+            }
+        }
+    }
+}
+
