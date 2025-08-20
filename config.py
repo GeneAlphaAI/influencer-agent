@@ -9,8 +9,8 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-
-GPT_MODEL = "gpt-4o-mini"
+Allowed_Origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+GPT_MODEL = "gpt-4.1-mini"
 PORT = os.getenv("PORT", 8000)
 HOST = os.getenv("HOST", "127.0.0.1")
 X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "fkjgldfjgldjfglj")
