@@ -35,6 +35,7 @@ Desktop.ini
 .directory
 *~
 __pycache__
+myenv/
 
 # Coveralls
 coverage

@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import json
-from config import GPT_MODEL, tools, client, num_tokens_from_messages, count_tokens_from_response
+from config import GPT_MODEL, tools, client
 from fastapi import HTTPException
 from utils.x_api import get_token_price
 
@@ -195,9 +195,6 @@ async def tweet_analysis(data):
         if not response or response.strip() == "":
             logging.warning(f"GPT returned empty response. Original input")
             response = "I'm sorry, but I couldn't come up with a suitable answer. Please try rephrasing your request."
-        
-        logging.info(f"GPT response: {response}")
-        logging.info(f"OUTPUT TOKENS: {count_tokens_from_response(response)}")
         
     except HTTPException:
         raise  
