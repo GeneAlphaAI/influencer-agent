@@ -224,27 +224,6 @@ async def get_unique_accounts_route():
         logging.error(f"Failed to fetch unique accounts: {error}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-@app.post("/test")
-async def search_influencer(payload: InfluencerSearchRequest):
-    """
-    Search for an influencer by username.
-    - First check MongoDB `accounts` collection.
-    - If not found, fetch from X API and save.
-    - Optionally link influencer to a wallet if `walletAddress` is provided.
-    """
-    # username = payload.username.strip().lower()
-    # wallet = payload.walletAddress
-
-    # logging.info(f"Searching influencer: username={username}, wallet={wallet}")
-
-    # 1. Check if influencer exists in DB
-    try:
-        return await fetch_influencers_tweets()
-
-    except Exception as e:
-        logging.error(e)
-        raise HTTPException(status_code=500, detail="Database error during lookup")
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)
