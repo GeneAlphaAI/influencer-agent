@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  influencer-agent:
+    build: .
+    container_name: influencer-agent
+    restart: always
+    ports:
+      - "5300:5300"   # host:container
+    environment:
+      - PYTHONUNBUFFERED=1
+
