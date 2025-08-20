@@ -11,8 +11,8 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 GPT_MODEL = "gpt-4o-mini"
-PORT = os.getenv("PORT", "127.0.0.1")
-HOST = os.getenv("HOST", 8000)
+PORT = os.getenv("PORT", 8000)
+HOST = os.getenv("HOST", "127.0.0.1")
 X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "fkjgldfjgldjfglj")
 
 SHORT_TERM_MEMORY_LIMIT = 20
