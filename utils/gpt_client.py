@@ -18,7 +18,9 @@ Your job:
 1) Decide if the tweet contains a forward-looking statement about a token/asset price or market direction.
 2) If yes, extract structured details into JSON.
 3) If not, mark as not a prediction and set fields to null where applicable.
-4) When prediction is true then call the get_token_price tool with the relevant token symbol.
+4) Tweets may contain text, images, or both.
+5) If an image is included, analyze it as well because it may contain charts or prediction text.
+6) When prediction is true then call the get_token_price tool with the relevant token symbol.
 
 Treat as a prediction if:
 - Explicit target price/range is given (e.g., "$SOL to $300", "ETH at 4k").
@@ -46,6 +48,7 @@ Output:
   "timeframe": "<raw phrase from tweet>" | null,
   "deadline_utc": null,
   "current_price": null,
+  "image_analysis": <image analysis short report>,
   "reason": "<one-sentence rationale>",
   "evidence": "<short supporting quote from the tweet>"
 }
@@ -59,11 +62,17 @@ Normalization & rules:
 
 """
 
+    messages = [{"role": "system", "content": system_prompt}]
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Tweet Data: {data}"}
-    ]
+    # user content (text + optional images)
+    user_content = [{"type": "text", "text": f"Tweet Data: {data}"}]
+
+    # If tweet has images, attach them as image_url
+    if "media_urls" in data:
+        for url in data["media_urls"]:
+            user_content.append({"type": "image_url", "image_url": {"url": url}})
+
+    messages.append({"role": "user", "content": user_content})
 
     return messages
 
@@ -190,12 +199,12 @@ async def tweet_analysis(data):
         else:
             response = assistant_message.content
         
-            return response
         # Handle empty or missing response
         if not response or response.strip() == "":
             logging.warning(f"GPT returned empty response. Original input")
             response = "I'm sorry, but I couldn't come up with a suitable answer. Please try rephrasing your request."
         
+        return response
     except HTTPException:
         raise  
     except Exception as error:

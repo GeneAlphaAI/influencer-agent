@@ -38,10 +38,11 @@ def get_user_tweets(user_id: str, max_results=5):
     headers = {"Authorization": f"Bearer {X_BEARER_TOKEN}"}
     params = {
         "max_results": max_results,
-        "tweet.fields": "author_id,created_at,text",
-        "expansions": "author_id",
+        "tweet.fields": "author_id,created_at,text,attachments",
+        "expansions": "author_id,attachments.media_keys",
         "exclude": "replies,retweets",
-        "user.fields": "username"
+        "user.fields": "username",
+        "media.fields": "url,preview_image_url,type"
     }
 
     try:
@@ -51,9 +52,23 @@ def get_user_tweets(user_id: str, max_results=5):
 
         tweets = data.get("data", [])
         users = {u["id"]: u["username"] for u in data.get("includes", {}).get("users", [])}
+        media_map = {m["media_key"]: m for m in data.get("includes", {}).get("media", [])}
 
         for tweet in tweets:
             tweet["username"] = users.get(tweet["author_id"], None)
+
+            # If tweet has media, attach resolved URLs
+            if "attachments" in tweet and "media_keys" in tweet["attachments"]:
+                media_urls = []
+                for key in tweet["attachments"]["media_keys"]:
+                    media_item = media_map.get(key)
+                    if media_item:
+                        if media_item["type"] == "photo":
+                            media_urls.append(media_item.get("url"))
+                        elif media_item["type"] in ["video", "animated_gif"]:
+                            media_urls.append(media_item.get("preview_image_url"))
+                if media_urls:
+                    tweet["media_urls"] = media_urls
 
         return tweets
 
