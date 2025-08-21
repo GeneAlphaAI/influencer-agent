@@ -16,22 +16,35 @@ class SummaryModel(BaseModel):
     timeframe: Optional[str] = None
     deadline_utc: Optional[str] = None
     current_price: Optional[float] = None
+    image_analysis: Optional[str] = None
     reason: Optional[str] = None
     evidence: Optional[str] = None
 
 
 class TweetModel(BaseModel):
     tweet_id: str
-    account_name: str  # FK reference
+    account_name: str
     text: str
+    attachments: List[str] = Field(default_factory=list)
     created_at: datetime
-    summary: Optional[SummaryModel] = None  # object instead of string
-    prediction: bool = False                # query helper
+    summary: Optional[SummaryModel] = None
+    prediction: bool = False
 
     @validator("created_at", pre=True)
     def parse_datetime(cls, v):
         if isinstance(v, str):
-            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError:
+                try:
+                    return datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    try:
+                        return datetime.strptime(v, "%a %b %d %H:%M:%S +0000 %Y")  # Twitter format
+                    except ValueError:
+                        return datetime.utcnow() 
+        elif v is None:
+            return datetime.utcnow()  
         return v
 # -----------------------
 # Account in DB (Stores Tweets)

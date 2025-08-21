@@ -156,42 +156,79 @@ async def get_all_unique_accounts_from_all_users() -> list:
 async def save_tweet(account_name: str, tweet_data: dict, summary_data: Optional[dict] = None) -> dict:
     try:
         tweets_collection = db.tweets
-
         tweet_id = str(tweet_data.get("id") or tweet_data.get("tweet_id"))
+        
         if not tweet_id:
             raise HTTPException(status_code=400, detail="Tweet must contain 'id' or 'tweet_id'")
-
+        
         account_key = account_name.lower()
-
         existing = await tweets_collection.find_one({
             "account_name": account_key,
             "tweet_id": tweet_id
         })
+        
         if existing:
             return {"id": str(existing["_id"]), "status": "exists"}
-
+        
+        # Extract attachments as list of strings
+        raw_attachments = tweet_data.get("media_urls", [])
+        attachments = []
+        
+        if isinstance(raw_attachments, dict):
+            # Use media_keys if dict
+            attachments = raw_attachments.get("media_urls", [])
+        elif isinstance(raw_attachments, list):
+            attachments = raw_attachments
+        else:
+            attachments = []
+        
         # Parse summary if present
         summary_obj = None
         if summary_data:
             if isinstance(summary_data, str):
                 summary_data = json.loads(summary_data)
             summary_obj = SummaryModel(**summary_data)
-
+        
+        # Handle created_at field conversion
+        created_at = tweet_data.get("created_at")
+        if isinstance(created_at, str):
+            # Handle various datetime string formats
+            try:
+                created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                # Try other common formats if ISO format fails
+                try:
+                    created_at = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    # Fallback to current time if parsing fails
+                    created_at = datetime.utcnow()
+        elif created_at is None:
+            created_at = datetime.utcnow()
+        
         tweet = TweetModel(
             tweet_id=tweet_id,
             account_name=account_key,
             text=tweet_data.get("text") or tweet_data.get("full_text", ""),
-            created_at=tweet_data.get("created_at"),
+            attachments=attachments,
+            created_at=created_at,
             summary=summary_obj,
             prediction=summary_obj.is_prediction if summary_obj else False
-        ).dict()
-
-        result = await tweets_collection.insert_one(tweet)
+        )
+        
+        # Convert to dict and handle datetime serialization for MongoDB
+        tweet_dict = tweet.dict()
+        # Ensure datetime is properly converted for MongoDB
+        if isinstance(tweet_dict.get("created_at"), datetime):
+            tweet_dict["created_at"] = tweet_dict["created_at"]
+        
+        result = await tweets_collection.insert_one(tweet_dict)
+        logging.info(f"Saved tweet for {account_name}: {tweet_id} with ID {result.inserted_id}")
         return {"id": str(result.inserted_id), "status": "created"}
-
+        
     except Exception as e:
-        print(f"Error saving tweet for {account_name}: {str(e)}")
+        logging.error(f"Error saving tweet for {account_name}: {str(e)}")
         return {"error": str(e), "status": "failed"}
+
 
 async def check_tweet_exists(account_name: str, tweet_id: str) -> dict:
     """
@@ -209,7 +246,7 @@ async def check_tweet_exists(account_name: str, tweet_id: str) -> dict:
             "account_name": account_key,
             "tweet_id": tweet_id
         })
-        print(f"Existing tweet check for {account_key}: {tweet_id} - {existing is not None}")
+        # print(f"Existing tweet check for {account_key}: {tweet_id} - {existing is not None}")
 
         if existing:
             return {"id": str(existing["_id"]), "status": "exists"}

@@ -30,7 +30,6 @@ app.add_middleware(
     allow_headers=["*"],  
 )
 
-
 class QueryRequest(BaseModel):
     query: str
     userId: str
@@ -42,22 +41,24 @@ class InfluencerSearchRequest(BaseModel):
     username: str
     walletAddress: Optional[str] = None
 
+
 async def fetch_influencers_tweets() -> list:
     """
     Fetch only the most recent tweet for each influencer.
     Returns tweets sorted newest first.
     """
     ids = await get_all_unique_x_influencers_ids()
-    latest_tweets = []
+
+    # latest_tweets = []
 
     for user_id in ids:
         if not user_id or not str(user_id).isdigit():
-            print(f"Skipping invalid ID: {user_id}")
+            logging.warning(f"Skipping invalid ID: {user_id}")
             continue
 
         try:
             tweets = get_user_tweets(user_id, max_results=5)  # Twitter API min=5
-            # print(f"Fetched tweets for {user_id}: {tweets} END")
+          
             if tweets:
                 # Pick the most recent tweet for this account
                 tweets.sort(
@@ -65,37 +66,37 @@ async def fetch_influencers_tweets() -> list:
                     reverse=True
                 )
                 most_recent = tweets[0]
-                latest_tweets.append(most_recent)
+         
+                # latest_tweets.append(most_recent)
                 res = await check_tweet_exists(most_recent['username'], most_recent['id'])
 
                 if res.get("status") == "exists":
-                    print(f"Tweet already exists for {most_recent['username']}")
+                    logging.info(f"Tweet already exists for {most_recent['username']}")
+                    return
                 else:
-                    print(f"New tweet found for {most_recent['username']}")
-                    tweet = await tweet_analysis(most_recent)  # Analyze the tweet
-                    print(f"Tweet analysis result: {tweet}")
-                    await save_tweet(most_recent['username'],most_recent,tweet)
-                    print(f"Saved tweet for {most_recent['username']}")
-    
-                # print(f"Fetched latest tweet for {most_recent['username']}")
+                    logging.info(f"New tweet found for {most_recent['username']}")
+                    tweet_analysis_result = await tweet_analysis(most_recent)  # Analyze the tweet
+                    logging.info(f"Tweet analysis result: {tweet_analysis_result}")
+                    await save_tweet(most_recent['username'],most_recent,tweet_analysis_result)
         except Exception as e:
-            print(f"Error fetching tweets for ID {user_id}: {e}")
+            logging.error(f"Error fetching tweets for ID {user_id}: {e}")
 
     # Sort across all accounts newest first
-    latest_tweets.sort(
-        key=lambda t: datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")),
-        reverse=True
-    )
-    return latest_tweets
+    # latest_tweets.sort(
+    #     key=lambda t: datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")),
+    #     reverse=True
+    # )
+    # return latest_tweets
+
 
 @app.on_event("startup")
 async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
 
-    # Schedule fetch_influencers_tweets every 6 hours (4 times/day)
-    scheduler.add_job(fetch_influencers_tweets, "interval", hours=6)
+    # Schedule fetch_influencers_tweets every 4 hours (6 times/day)
+    scheduler.add_job(fetch_influencers_tweets, "interval", hours=4)
     scheduler.start()
-    logging.info("Scheduler started: fetch_influencers_tweets will run every 6 hours")
+    logging.info("Scheduler started: fetch_influencers_tweets will run every 4 hours")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -224,17 +225,19 @@ async def search_influencer(payload: InfluencerSearchRequest):
         logging.error(f"Failed to fetch from X API for {username}: {api_error}")
         raise HTTPException(status_code=502, detail="Failed to fetch influencer from X API")
 
-@app.get("/accounts/all", response_model=list[str])
-async def get_unique_accounts_route():
-    """
-    Retrieve all unique Twitter usernames across all users.
-    """
-    try:
-        accounts = await get_all_unique_accounts_from_all_users()
-        return sorted(accounts)  # Ensure consistent ordering
-    except Exception as error:
-        logging.error(f"Failed to fetch unique accounts: {error}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+# @app.get("/accounts/all", response_model=list[str])
+# async def get_unique_accounts_route():
+#     """
+#     Retrieve all unique Twitter usernames across all users.
+#     """
+#     try:
+#         accounts = await get_all_unique_accounts_from_all_users()
+#         return sorted(accounts)  # Ensure consistent ordering
+#     except Exception as error:
+#         logging.error(f"Failed to fetch unique accounts: {error}")
+#         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)
