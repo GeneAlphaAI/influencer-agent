@@ -14,15 +14,19 @@ pipeline {
             steps {
                 // Inject SONARQUBE_TOKEN from Jenkins credentials (Secret Text)
                 withCredentials([string(credentialsId: 'SONARQUBE_TOKEN', variable: 'SONARQUBE_TOKEN')]) {
-                    withSonarQubeEnv('sonarqube') { // Name you configured in Jenkins
-                        sh """
-                            sonar-scanner \
-                              -Dsonar.projectKey=influencer-agent \
-                              -Dsonar.sources=. \
-                              -Dsonar.host.url=https://sonarqube.techthree.io \
-                              -Dsonar.token=${SONARQUBE_TOKEN} \
-                              -Dsonar.qualitygate.wait=true
-                        """
+                    withSonarQubeEnv('sonarqube') { // SonarQube server name from Manage Jenkins
+                        script {
+                            // Reference the SonarQube Scanner tool configured in Jenkins
+                            def scannerHome = tool 'sonarqube scanner'
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                  -Dsonar.projectKey=influencer-agent \
+                                  -Dsonar.sources=. \
+                                  -Dsonar.host.url=https://sonarqube.techthree.io \
+                                  -Dsonar.token=${SONARQUBE_TOKEN} \
+                                  -Dsonar.qualitygate.wait=true
+                            """
+                        }
                     }
                 }
             }
