@@ -10,6 +10,29 @@ pipeline {
     }
 
     stages {
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') { // Name you configured in Jenkins
+                    sh """
+                        sonar-scanner \
+                          -Dsonar.projectKey=influencer-agent \
+                          -Dsonar.sources=. \
+                          -Dsonar.host.url=https://sonarqube.techthree.io \
+                          -Dsonar.token=${SONARQUBE_TOKEN} \
+                          -Dsonar.qualitygate.wait=true
+                    """
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
         stage('Deploy') {
             steps {
                 sshagent(['Genealpha-Frontend-credentials']) {
@@ -35,3 +58,4 @@ pipeline {
         }
     }
 }
+
