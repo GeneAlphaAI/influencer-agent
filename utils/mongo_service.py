@@ -16,7 +16,6 @@ async def create_or_update_user_with_agent(data: dict):
     accounts = data.get("accounts", [])
     categories = data.get("categories", [])
 
-    # ✅ Only keep username + influence
     account_refs = []
     for acc in accounts:
         username = acc["username"].strip().lower()
@@ -71,12 +70,13 @@ async def create_or_update_user_with_agent(data: dict):
     await db.users.replace_one({"walletAddress": wallet}, existing_user)
     return {"status": "updated", "user": existing_user}
 
+
 async def get_user_agents(wallet: str) -> list:
     pipeline = [
         {"$match": {"walletAddress": wallet}},
         {"$unwind": "$agents"},
         {"$unwind": "$agents.accounts"},
-
+        
         {
             "$lookup": {
                 "from": "accounts",
@@ -86,7 +86,7 @@ async def get_user_agents(wallet: str) -> list:
             }
         },
         {"$unwind": {"path": "$agents.accounts.account_info", "preserveNullAndEmptyArrays": True}},
-
+        
         {
             "$lookup": {
                 "from": "tweets",
@@ -95,19 +95,28 @@ async def get_user_agents(wallet: str) -> list:
                     {
                         "$match": {
                             "$expr": {
-                                "$eq": [
-                                    {"$toLower": "$account_name"},
-                                    {"$toLower": "$$uname"}
+                                "$and": [
+                                    {"$eq": [
+                                        {"$toLower": "$account_name"},
+                                        {"$toLower": "$$uname"}
+                                    ]},
+                                    {"$eq": ["$prediction", True]}  
                                 ]
                             }
                         }
                     },
-                    {"$project": {"_id": 0}}   # ✅ strip ObjectId
+                    {"$sort": {"created_at": -1}},  # Sort by most recent
+                    {"$project": {"_id": 0}}  
                 ],
                 "as": "agents.accounts.tweets"
             }
         },
-
+        {
+            "$match": {
+                "agents.accounts.tweets.0": {"$exists": True} 
+            }
+        },
+        
         {
             "$group": {
                 "_id": {
@@ -118,7 +127,7 @@ async def get_user_agents(wallet: str) -> list:
                 "accounts": {"$push": "$agents.accounts"}
             }
         },
-
+        
         {
             "$project": {
                 "_id": 0,
