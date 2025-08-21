@@ -10,6 +10,36 @@ pipeline {
     }
 
     stages {
+        stage('SonarQube Analysis') {
+            steps {
+                // Inject SONARQUBE_TOKEN from Jenkins credentials (Secret Text)
+                withCredentials([string(credentialsId: 'SONARQUBE_TOKEN', variable: 'SONARQUBE_TOKEN')]) {
+                    withSonarQubeEnv('sonarqube') { // SonarQube server name from Manage Jenkins
+                        script {
+                            // Reference the SonarQube Scanner tool configured in Jenkins
+                            def scannerHome = tool 'sonarqube scanner'
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                  -Dsonar.projectKey=influencer-agent \
+                                  -Dsonar.sources=. \
+                                  -Dsonar.host.url=https://sonarqube.techthree.io \
+                                  -Dsonar.token=${SONARQUBE_TOKEN} \
+                                  -Dsonar.qualitygate.wait=true
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
         stage('Deploy') {
             steps {
                 sshagent(['Genealpha-Frontend-credentials']) {
@@ -35,3 +65,4 @@ pipeline {
         }
     }
 }
+
