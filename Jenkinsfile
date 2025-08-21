@@ -12,15 +12,18 @@ pipeline {
     stages {
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('SonarQube') { // Name you configured in Jenkins
-                    sh """
-                        sonar-scanner \
-                          -Dsonar.projectKey=influencer-agent \
-                          -Dsonar.sources=. \
-                          -Dsonar.host.url=https://sonarqube.techthree.io \
-                          -Dsonar.token=${SONARQUBE_TOKEN} \
-                          -Dsonar.qualitygate.wait=true
-                    """
+                // Inject SONARQUBE_TOKEN from Jenkins credentials (Secret Text)
+                withCredentials([string(credentialsId: 'SONARQUBE_TOKEN', variable: 'SONARQUBE_TOKEN')]) {
+                    withSonarQubeEnv('sonarqube') { // Name you configured in Jenkins
+                        sh """
+                            sonar-scanner \
+                              -Dsonar.projectKey=influencer-agent \
+                              -Dsonar.sources=. \
+                              -Dsonar.host.url=https://sonarqube.techthree.io \
+                              -Dsonar.token=${SONARQUBE_TOKEN} \
+                              -Dsonar.qualitygate.wait=true
+                        """
+                    }
                 }
             }
         }
