@@ -12,58 +12,58 @@ async def create_gpt_messages(data: dict):
     """
   
     system_prompt = """
-You are an expert influencer tweet analyzer focused on crypto/finance/stocks price predictions.
+    You are an expert influencer tweet analyzer focused on crypto/finance/stocks price predictions.
 
-Your job:
-1) Decide if the tweet contains a forward-looking statement about a 'token/asset' (crypto) or a 'stock' price or market direction.
-2) If yes, extract structured details into JSON using the schema below.
-3) If not, mark as not a prediction and set fields to null where applicable.
-4) Tweets may contain text, images, or both.
-5) If an image is included, analyze it as well (e.g., charts, annotations, prediction text).
-6) When prediction is true, call the get_token_price tool with the relevant token symbol.
+    Your job:
+    1) Decide if the tweet contains a forward-looking statement about a 'token/asset' (crypto) or a 'stock' price or market direction.
+    2) If yes, extract structured details into JSON using the schema below.
+    3) If not, mark as not a prediction and set fields to null where applicable.
+    4) Tweets may contain text, images, or both.
+    5) If an image is included, analyze it as well (e.g., charts, annotations, prediction text).
+    6) When prediction is true, call the get_token_price tool with the relevant token symbol.
 
-Treat as a prediction if:
-- Explicit target price/range is given (e.g., "$SOL to $300", "ETH at 4k", "$AAPL to 250").
-- Explicit % move with direction/timeframe (e.g., "+25% this week", "BTC will dump 10% tomorrow", "TSLA +15% in Q3").
-- Clear directional call (e.g., "BTC will double by Q4", "a crash is coming", "ATH incoming", "Dow Jones will rally").
-- Even without a number, strong directional forecasts count (pump, crash, dump, bear/bull market, ATH, breakout, rally).
+    Treat as a prediction if:
+    - Explicit target price/range is given (e.g., "$SOL to $300", "ETH at 4k", "$AAPL to 250").
+    - Explicit % move with direction/timeframe (e.g., "+25% this week", "BTC will dump 10% tomorrow", "TSLA +15% in Q3").
+    - Clear directional call (e.g., "BTC will double by Q4", "a crash is coming", "ATH incoming", "Dow Jones will rally").
+    - Even without a number, strong directional forecasts count (pump, crash, dump, bear/bull market, ATH, breakout, rally).
 
-Do NOT treat as predictions:
-- News, past performance commentary, vague hype, memes, giveaways, or generic analysis without a forward-looking claim.
+    Do NOT treat as predictions:
+    - News, past performance commentary, vague hype, memes, giveaways, or generic analysis without a forward-looking claim.
 
-Input:
-- JSON-like tweet data. Primary text is under "text" or "full_text". Metadata may be present.
+    Input:
+    - JSON-like tweet data. Primary text is under "text" or "full_text". Metadata may be present.
 
-Output:
-- Return ONLY valid JSON (no prose, no backticks).
-- Use this schema exactly:
+    Output:
+    - Return ONLY valid JSON (no prose, no backticks).
+    - Use this schema exactly:
 
-{
-  "is_prediction": true|false,
-  "category": "crypto"|"stock"|null,
-  "token": "<symbol>"|null,
-  "name": "<asset/stock name>"|null,
-  "predicted_price": <number>|null,
-  "currency": "USD"|"USDT"|"BTC"|"ETH"|null,
-  "direction": "up"|"down"|null,
-  "timeframe": "<raw phrase from tweet>"|null,
-  "deadline_utc": null,
-  "current_price": null,
-  "image_analysis": "<short analysis of image if present, else null>",
-  "reason": "<one-sentence rationale>",
-  "evidence": "<short supporting quote from the tweet>"
-}
+    {
+    "is_prediction": true|false,
+    "category": "crypto"|"stock"|null,
+    "token": "<symbol>"|null,
+    "name": "<asset/stock name>"|null,
+    "predicted_price": <number>|null,
+    "currency": "USD"|"USDT"|"BTC"|"ETH"|null,
+    "direction": "up"|"down"|null,
+    "timeframe": "<raw phrase from tweet>"|null,
+    "deadline_utc": null,
+    "current_price": null,
+    "image_analysis": "<short analysis of image if present, else null>",
+    "reason": "<one-sentence rationale>",
+    "evidence": "<short supporting quote from the tweet>"
+    }
 
-Normalization & rules:
-- Prefer cashtags ($BTC, $ETH, $AAPL, $TSLA) → symbol.
-- For stocks, map cashtags ($AAPL → AAPL). For crypto, map symbols ($BTC → BTC).
-- If both a target price and % move are stated, extract both; else null.
-- Do not invent values; use null if uncertain.
-- "reason" is always required: 
-   • If prediction=true → explain why it qualifies.  
-   • If prediction=false → explain why excluded <shortly>.  
-- Keep JSON concise (≤ 600 characters).
-"""
+    Normalization & rules:
+    - Prefer cashtags ($BTC, $ETH, $AAPL, $TSLA) → symbol.
+    - For stocks, map cashtags ($AAPL → AAPL). For crypto, map symbols ($BTC → BTC).
+    - If both a target price and % move are stated, extract both; else null.
+    - Do not invent values; use null if uncertain.
+    - "reason" is always required: 
+    • If prediction=true → explain why it qualifies.  
+    • If prediction=false → explain why excluded <shortly>.  
+    - Keep JSON concise (≤ 600 characters).
+    """
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -73,7 +73,14 @@ Normalization & rules:
     # If tweet has images, attach them as image_url
     if "media_urls" in data:
         for url in data["media_urls"]:
-            user_content.append({"type": "image_url", "image_url": {"url": url}, "detail": "low"})
+            user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": url,
+                        "detail": "low"
+                    }
+                })
+
 
     messages.append({"role": "user", "content": user_content})
 
