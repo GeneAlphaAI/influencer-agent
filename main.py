@@ -1,11 +1,12 @@
+from unittest import result
 from fastapi.responses import FileResponse
 from fastapi import Request, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-from utils.mongo_service import  check_tweet_exists, create_or_update_user_with_agent, get_all_unique_accounts_from_all_users, get_all_unique_x_influencers_ids, get_influencer_account_by_username, get_user_agents,save_account_info , save_tweet
+from utils.mongo_service import  check_tweet_exists, create_or_update_user_with_agent, save_combined_predictions, get_all_unique_x_influencers_ids, get_all_users, get_influencer_account_by_username, get_last_24h_predicted_tweets, get_user_agents,save_account_info , save_tweet
 from utils.x_api import get_user_info, get_user_tweets
-from utils.gpt_client import tweet_analysis
+from utils.gpt_client import tweet_analysis, combined_predictions_analysis
 from datetime import datetime
 import logging
 from typing import Optional
@@ -88,20 +89,39 @@ async def fetch_influencers_tweets() -> list:
     # )
     # return latest_tweets
 
+async def combined_prediction_analysis():
+    """
+    Analyze a tweet and generate a combined prediction.
+    """
+    logging.info(f"Generating combined prediction")
+    tweets_data = await get_last_24h_predicted_tweets()
+
+    tweet_analysis = await combined_predictions_analysis(tweets_data)
+
+    await save_combined_predictions(tweet_analysis)
+   
 
 @app.on_event("startup")
 async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
 
-    # Schedule fetch_influencers_tweets every 4 hours (6 times/day)
+    # Add jobs
     scheduler.add_job(fetch_influencers_tweets, "interval", hours=4)
-    scheduler.start()
-    logging.info("Scheduler started: fetch_influencers_tweets will run every 4 hours")
+    logging.info("Scheduled: fetch_influencers_tweets every 4 hours")
+
+    scheduler.add_job(combined_prediction_analysis, "interval", hours=12)
+    logging.info("Scheduled: combined_prediction_analysis every 12 hours")
+
+    # Start scheduler 
+    if not scheduler.running:
+        scheduler.start()
+        logging.info("Scheduler started")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     scheduler.shutdown()
     logging.info("Scheduler stopped")
+
 
 @app.post("/user/agent/create")
 async def create_user(request: Request):
@@ -150,6 +170,7 @@ async def create_user(request: Request):
     except Exception as error:
         logging.error(f"Unexpected error: {error}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
 
 @app.get("/user/agent/get")
 async def get_agents(walletAddress: str):
@@ -224,19 +245,6 @@ async def search_influencer(payload: InfluencerSearchRequest):
     except Exception as api_error:
         logging.error(f"Failed to fetch from X API for {username}: {api_error}")
         raise HTTPException(status_code=502, detail="Failed to fetch influencer from X API")
-
-# @app.get("/accounts/all", response_model=list[str])
-# async def get_unique_accounts_route():
-#     """
-#     Retrieve all unique Twitter usernames across all users.
-#     """
-#     try:
-#         accounts = await get_all_unique_accounts_from_all_users()
-#         return sorted(accounts)  # Ensure consistent ordering
-#     except Exception as error:
-#         logging.error(f"Failed to fetch unique accounts: {error}")
-#         raise HTTPException(status_code=500, detail="Internal Server Error")
-
 
 
 if __name__ == "__main__":

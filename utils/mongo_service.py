@@ -4,8 +4,9 @@ from utils.db import db
 from utils.db import db
 from datetime import datetime, timedelta
 from typing import List, Optional
-from utils.models import SummaryModel, UserModel, AccountModel, TweetModel, AccountRefModel,AgentModel
+from utils.models import CombinedPredictionModel, SummaryModel, UserModel, AccountModel, TweetModel, AccountRefModel,AgentModel
 from fastapi import HTTPException
+from pydantic import parse_obj_as
 
 # -----------------------
 # USER FUNCTIONS
@@ -70,13 +71,13 @@ async def create_or_update_user_with_agent(data: dict):
     await db.users.replace_one({"walletAddress": wallet}, existing_user)
     return {"status": "updated", "user": existing_user}
 
-
 async def get_user_agents(wallet: str) -> list:
     pipeline = [
         {"$match": {"walletAddress": wallet}},
         {"$unwind": "$agents"},
         {"$unwind": "$agents.accounts"},
-        
+
+        # lookup accounts
         {
             "$lookup": {
                 "from": "accounts",
@@ -86,7 +87,8 @@ async def get_user_agents(wallet: str) -> list:
             }
         },
         {"$unwind": {"path": "$agents.accounts.account_info", "preserveNullAndEmptyArrays": True}},
-        
+
+        # lookup tweets
         {
             "$lookup": {
                 "from": "tweets",
@@ -96,27 +98,23 @@ async def get_user_agents(wallet: str) -> list:
                         "$match": {
                             "$expr": {
                                 "$and": [
-                                    {"$eq": [
-                                        {"$toLower": "$account_name"},
-                                        {"$toLower": "$$uname"}
-                                    ]},
-                                    {"$eq": ["$prediction", True]}  
+                                    {"$eq": [{"$toLower": "$account_name"}, {"$toLower": "$$uname"}]},
+                                    {"$eq": ["$prediction", True]}
                                 ]
                             }
                         }
                     },
-                    {"$sort": {"created_at": -1}},  # Sort by most recent
-                    {"$project": {"_id": 0}}  
+                    {"$sort": {"created_at": -1}},
+                    {"$project": {"_id": 0}}
                 ],
                 "as": "agents.accounts.tweets"
             }
         },
-        {
-            "$match": {
-                "agents.accounts.tweets.0": {"$exists": True} 
-            }
-        },
-        
+
+        # keep only accounts with predictions
+        {"$match": {"agents.accounts.tweets.0": {"$exists": True}}},
+
+        # group back by agent
         {
             "$group": {
                 "_id": {
@@ -127,14 +125,42 @@ async def get_user_agents(wallet: str) -> list:
                 "accounts": {"$push": "$agents.accounts"}
             }
         },
-        
+
+        # lookup combined predictions for this agent + wallet
+        {
+            "$lookup": {
+                "from": "combined_predictions",
+                "let": {
+                    "agent_name": "$_id.agent",
+                    "user_wallet": wallet
+                },
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$and": [
+                                    {"$eq": ["$agent_id", "$$agent_name"]},   
+                                    {"$eq": ["$user_wallet", "$$user_wallet"]}
+                                ]
+                            }
+                        }
+                    },
+                    {"$sort": {"created_at": -1}},
+                    {"$limit": 1},   
+                    {"$project": {"_id": 0}}
+                ],
+                "as": "combined_predictions"
+            }
+        },
+
         {
             "$project": {
                 "_id": 0,
                 "agent": "$_id.agent",
                 "categories": "$_id.categories",
                 "predictions": "$_id.predictions",
-                "accounts": 1
+                "accounts": 1,
+                "combined_prediction": {"$arrayElemAt": ["$combined_predictions", 0]}  # single object instead of array
             }
         }
     ]
@@ -158,6 +184,16 @@ async def get_all_unique_accounts_from_all_users() -> list:
 
     return list(unique_accounts.values())
 
+async def get_all_users() -> List[UserModel]:
+    """
+    Fetch all existing users from the database.
+    Returns a list of UserModel instances.
+    """
+    users_cursor = db.users.find({})
+    users = await users_cursor.to_list(length=None)  # fetch all docs
+    
+    # Validate & parse into Pydantic models
+    return parse_obj_as(List[UserModel], users)
 # -----------------------
 # ACCOUNT FUNCTIONS
 # -----------------------
@@ -243,7 +279,6 @@ async def save_tweet(account_name: str, tweet_data: dict, summary_data: Optional
     except Exception as e:
         logging.error(f"Error saving tweet for {account_name}: {str(e)}")
         return {"error": str(e), "status": "failed"}
-
 
 async def check_tweet_exists(account_name: str, tweet_id: str) -> dict:
     """
@@ -339,3 +374,85 @@ async def get_influencer_account_by_username(username: str) -> Optional[AccountM
         }
     )
     return AccountModel(**doc) if doc else None
+
+async def get_last_24h_predicted_tweets() -> list:
+    since = datetime.utcnow() - timedelta(hours=72)
+
+    pipeline = [
+        {
+            "$match": {
+                "prediction": True,
+                "created_at": {"$gte": since}
+            }
+        },
+        {
+            "$sort": {"created_at": -1} 
+        },
+        {
+            "$project": {
+                "_id": 0  
+            }
+        }
+    ]
+
+    cursor = db.tweets.aggregate(pipeline)
+    return await cursor.to_list(length=None)
+
+async def save_combined_predictions(res: dict) -> list:
+    """
+    Save all combined predictions from the response object into DB.
+    Handles insert/update per agent+wallet+token.
+    """
+    results = []
+    try:
+        for obj in res.get("combined_predictions", []):
+            combined = obj["combined_prediction"]
+
+            # Map incoming dict to Pydantic model fields
+            model_data = {
+                "agent_id": obj["agent_id"],
+                "user_wallet": obj["user_wallet"],
+                "token": combined.get("token"),
+                "predicted_price": combined.get("predicted_price"),
+                "currency": combined.get("currency"),
+                "direction": combined.get("direction"),
+                "confidence_score": combined.get("confidence_score"),
+                "reasoning": combined.get("reasoning"),
+                "supporting_influencers": [
+                    {
+                        "username": inf["account_name"],
+                        "influence": inf["influence_score"]
+                    }
+                    for inf in combined.get("supporting_influencers", [])
+                ],
+            }
+
+            # Validate with Pydantic
+            prediction = CombinedPredictionModel(**model_data)
+
+            # Save to Mongo
+            collection = db.combined_predictions
+            query = {
+                "agent_id": prediction.agent_id,
+                "user_wallet": prediction.user_wallet,
+                "token": prediction.token
+            }
+            update_data = prediction.dict()
+            update_data["updated_at"] = datetime.utcnow()
+
+            result = await collection.update_one(
+                query,
+                {"$set": update_data},
+                upsert=True
+            )
+
+            if result.upserted_id:
+                results.append({"status": "created", "id": str(result.upserted_id)})
+            else:
+                results.append({"status": "updated"})
+            logging.info(f"Combined prediction saved")
+    except Exception as e:
+        logging.error(f"Error saving combined predictions: {str(e)}")
+        results.append({"error": str(e), "status": "failed"})
+
+    return results

@@ -3,6 +3,7 @@ import asyncio
 import json
 from config import GPT_MODEL, tools, client
 from fastapi import HTTPException
+from utils.mongo_service import get_all_users
 from utils.x_api import get_token_price
 
 
@@ -87,14 +88,140 @@ async def create_gpt_messages(data: dict):
     return messages
 
 
-async def process_gpt_completion(messages, tools):
+async def create_combined_predictions_messages(data: dict):
+    """
+    Analyze influencer tweets to detect and summarize token price predictions.
+    """
+  
+    system_prompt = """
+    You are an expert financial influencer prediction aggregator.
+
+    You will be given structured tweet analysis data containing influencer tweets, prediction summaries, and metadata.
+
+    Your job is to aggregate these predictions into combined agent-level predictions.
+
+    -------------------
+    GOALS
+    -------------------
+
+    1. Detect Similar Predictions
+    - Identify if multiple influencers (account_name) made predictions about the same asset (token/stock/market condition).
+    - "Similar" means: same asset and overlapping outlook (predicted price range, direction, timeframe).
+
+    2. Fetch Influencer Data
+    - If similar predictions exist, call the external function 'get_all_users' to retrieve influencer details.
+    - Each user entry contains:
+    * influence_score (numerical weight)
+    * agent_id (the agent that selected the influencer)
+    * user_wallet (the blockchain wallet of the agent’s owner)
+
+    3. Generate Combined Predictions (per agent)
+    - Process each agent separately.
+    - Only include influencers explicitly linked to that agent.
+    - Within each agent:
+    * Identify the highest influence_score.
+    * Keep only influencers with influence_score >= 50% of that maximum.
+    * Drop all other influencers completely (ignore in reasoning and output).
+    - Merge the remaining predictions into a single combined prediction.
+    - If predictions conflict, select the narrative favored by the higher total influence weight.
+
+    4. Output Format Rules
+    - Output must be strictly valid JSON (no extra text).
+    - For each agent_id, output:
+    * agent_id
+    * user_wallet
+    * combined_prediction object containing:
+        - token
+        - predicted_price
+        - currency
+        - direction
+        - confidence_score (0–1 scale)
+        - reasoning (clear justification using only the included influencers)
+        - supporting_influencers (list of kept influencers with account_name, influence_score, and their prediction)
+
+    -------------------
+    OUTPUT JSON EXAMPLE
+    -------------------
+
+    {
+    "combined_predictions": [
+        {
+        "agent_id": "agent_1",
+        "user_wallet": "0x1234abcd5678ef90",
+        "combined_prediction": {
+            "token": "PLTR",
+            "predicted_price": 170,
+            "currency": "USD",
+            "direction": "down",
+            "confidence_score": 0.9,
+            "reasoning": "Both top-scoring influencers forecast PLTR decline toward 165–170, reinforcing a bearish outlook.",
+            "supporting_influencers": [
+            {
+                "account_name": "incomesharks",
+                "influence_score": 45,
+                "prediction": {
+                "predicted_price": 170,
+                "direction": "down"
+                }
+            },
+            {
+                "account_name": "other_influencer",
+                "influence_score": 30,
+                "prediction": {
+                "predicted_price": 165,
+                "direction": "down"
+                }
+            }
+            ]
+        }
+        },
+        {
+        "agent_id": "agent_2",
+        "user_wallet": "0xabcd56789012ef34",
+        "combined_prediction": {
+            "token": "PLTR",
+            "predicted_price": 175,
+            "currency": "USD",
+            "direction": "up",
+            "confidence_score": 0.65,
+            "reasoning": "The only qualifying influencer projects upside toward 175, suggesting moderate bullish confidence.",
+            "supporting_influencers": [
+            {
+                "account_name": "smaller_trader",
+                "influence_score": 50,
+                "prediction": {
+                "predicted_price": 175,
+                "direction": "up"
+                }
+            }
+            ]
+        }
+        }
+    ]
+    }
+    """
+
+
+
+    messages = [{"role": "system", "content": system_prompt}]
+
+
+    user_content = [{"type": "text", "text": f"Tweet Data: {data}"}]
+
+    messages.append({"role": "user", "content": user_content})
+
+    return messages
+
+
+async def process_gpt_completion(messages, tools, model=GPT_MODEL):
     """
     Asynchronously process the GPT completion with the provided messages and tools.
     """
     try:
+        print(model)
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model=GPT_MODEL,
+            model=model,
             messages=messages,
             tools=tools
         )
@@ -133,16 +260,19 @@ async def execute_tool_call(tool_call, data):
 async def _dispatch_tool_call(function_name, args, data):
     """Dispatch tool call to appropriate handler based on function name."""
 
+    async def handle_get_all_users():
+        return await get_all_users()
     # Map other function names to their handlers
     tool_handlers = {
         "get_token_price": lambda: get_token_price(args["symbol"]),
+        "get_all_users": handle_get_all_users,
     }
 
     handler = tool_handlers.get(function_name)
     if not handler:
         raise HTTPException(status_code=400, detail=f"Unknown function call: {function_name}")
 
-    return handler()
+    return await handler()
 
 
 async def handle_tool_calls(tool_calls, messages, data):
@@ -198,6 +328,52 @@ async def tweet_analysis(data):
 
             messages = await handle_tool_calls(tool_calls, messages, data)
             final_completion = await process_gpt_completion(messages, tools)
+            response = final_completion.choices[0].message.content
+        else:
+            response = assistant_message.content
+
+        if not response or response.strip() == "":
+            response = '{"is_prediction": false, "reason": "empty GPT response"}'
+
+        try:
+            return json.loads(response)
+        except Exception as parse_err:
+            logging.error(f"Failed to parse GPT response: {response}, error: {parse_err}")
+            return {"raw_response": response, "parse_error": str(parse_err)}
+
+    except Exception as error:
+        logging.error(f"Error processing user query: {error}", exc_info=True)
+        return {"error": str(error), "status": "failed"}
+
+
+async def combined_predictions_analysis(data):
+    try:
+        messages = await create_combined_predictions_messages(data)
+        completion = await process_gpt_completion(messages, tools, model="gpt-4.1-nano")
+        assistant_message = completion.choices[0].message
+
+        # handle tool calls
+        if assistant_message.tool_calls:
+            tool_calls = assistant_message.tool_calls
+            logging.info(f"Making tool calls: {tool_calls}")
+
+            messages.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments
+                        }
+                    } for tool_call in tool_calls
+                ]
+            })
+
+            messages = await handle_tool_calls(tool_calls, messages, data)
+            final_completion = await process_gpt_completion(messages, tools, model="gpt-4.1-nano")
             response = final_completion.choices[0].message.content
         else:
             response = assistant_message.content

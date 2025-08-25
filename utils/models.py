@@ -76,3 +76,23 @@ class UserModel(BaseModel):
     agents: List[AgentModel] = Field(default_factory=list, description="List of agents with accounts")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+class CombinedPredictionModel(BaseModel):
+    agent_id: str = Field(..., description="Unique identifier of the agent")
+    user_wallet: str = Field(..., description="Wallet address of the agent’s user")
+    token: str = Field(..., description="Token/Stock being predicted")
+    predicted_price: Optional[float] = None
+    currency: Optional[str] = None
+    direction: Optional[str] = None
+    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Confidence score (0–1)")
+    reasoning: Optional[str] = None
+    supporting_influencers: List[AccountRefModel] = Field(
+        default_factory=list,
+        description="List of influencers retained after filtering"
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator("updated_at", pre=True, always=True)
+    def set_updated(cls, v):
+        return v or datetime.utcnow()
