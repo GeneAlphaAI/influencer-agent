@@ -81,10 +81,15 @@ def get_user_tweets(user_id: str, max_results=5):
 
     return []
 
-def get_token_price(symbol: str) -> float:
-    symbol = symbol.upper() + "USDT"  # e.g., "ETH" -> "ETHUSDT"
+def get_token_price(symbol: str) -> Optional[float]:
+    symbol = symbol.upper() + "USDT"
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     response = requests.get(url)
     data = response.json()
+
+    if "price" not in data:
+        logging.warning(f"Price not found for {symbol}: {data}")
+        return None
     return float(data["price"])
+
 
