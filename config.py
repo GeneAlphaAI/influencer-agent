@@ -43,6 +43,13 @@ tools = [
                 "required": ["symbol"]
             }
         }
+    },
+      {
+        "type": "function",
+        "function": {
+            "name": "get_all_users",
+            "description": "Fetch all users from the database.",       
+        }
     }
 ]
 
