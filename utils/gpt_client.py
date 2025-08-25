@@ -171,20 +171,16 @@ async def handle_tool_calls(tool_calls, messages, data):
 
 
 async def tweet_analysis(data):
-    """
-    Process the user query, send it to GPT, and return a response.
-    """
     try:
         messages = await create_gpt_messages(data)
         completion = await process_gpt_completion(messages, tools)
         assistant_message = completion.choices[0].message
 
-        # tool calls
+        # handle tool calls
         if assistant_message.tool_calls:
             tool_calls = assistant_message.tool_calls
             logging.info(f"Making tool calls: {tool_calls}")
-            
-            # Add the assistant message with tool calls to the conversation
+
             messages.append({
                 "role": "assistant",
                 "content": None,
@@ -199,25 +195,22 @@ async def tweet_analysis(data):
                     } for tool_call in tool_calls
                 ]
             })
-            
-            # Process all tool calls
+
             messages = await handle_tool_calls(tool_calls, messages, data)
-            
-            # final completion with tool responses
             final_completion = await process_gpt_completion(messages, tools)
             response = final_completion.choices[0].message.content
         else:
             response = assistant_message.content
-        
-        # Handle empty or missing response
+
         if not response or response.strip() == "":
-            logging.warning(f"GPT returned empty response. Original input")
-            response = "I'm sorry, but I couldn't come up with a suitable answer. Please try rephrasing your request."
-        
-        return response
-    except HTTPException:
-        raise  
+            response = '{"is_prediction": false, "reason": "empty GPT response"}'
+
+        try:
+            return json.loads(response)
+        except Exception as parse_err:
+            logging.error(f"Failed to parse GPT response: {response}, error: {parse_err}")
+            return {"raw_response": response, "parse_error": str(parse_err)}
+
     except Exception as error:
         logging.error(f"Error processing user query: {error}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {error}")
-
+        return {"error": str(error), "status": "failed"}

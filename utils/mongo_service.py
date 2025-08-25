@@ -198,18 +198,25 @@ async def save_tweet(account_name: str, tweet_data: dict, summary_data: Optional
                 summary_data = json.loads(summary_data)
             summary_obj = SummaryModel(**summary_data)
         
+
+        if summary_data:
+            try:
+                if isinstance(summary_data, str):
+                    summary_data = json.loads(summary_data)
+                summary_obj = SummaryModel(**summary_data)
+            except Exception as parse_err:
+                logging.error(f"Failed to parse summary_data: {summary_data}, error: {parse_err}")
+                summary_obj = summary_data  # keep raw if parsing fails
+  
         # Handle created_at field conversion
         created_at = tweet_data.get("created_at")
         if isinstance(created_at, str):
-            # Handle various datetime string formats
             try:
                 created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             except ValueError:
-                # Try other common formats if ISO format fails
                 try:
                     created_at = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
                 except ValueError:
-                    # Fallback to current time if parsing fails
                     created_at = datetime.utcnow()
         elif created_at is None:
             created_at = datetime.utcnow()
@@ -226,7 +233,6 @@ async def save_tweet(account_name: str, tweet_data: dict, summary_data: Optional
         
         # Convert to dict and handle datetime serialization for MongoDB
         tweet_dict = tweet.dict()
-        # Ensure datetime is properly converted for MongoDB
         if isinstance(tweet_dict.get("created_at"), datetime):
             tweet_dict["created_at"] = tweet_dict["created_at"]
         
