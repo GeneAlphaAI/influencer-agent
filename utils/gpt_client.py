@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import json
+import inspect
 from config import GPT_MODEL, tools, client
 from fastapi import HTTPException
 from utils.mongo_service import get_all_users
@@ -271,7 +272,10 @@ async def _dispatch_tool_call(function_name, args, data):
     if not handler:
         raise HTTPException(status_code=400, detail=f"Unknown function call: {function_name}")
 
-    return await handler()
+    result = handler()
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 async def handle_tool_calls(tool_calls, messages, data):
