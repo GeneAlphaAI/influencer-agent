@@ -50,13 +50,11 @@ async def fetch_influencers_tweets() -> list:
     """
     ids = await get_all_unique_x_influencers_ids()
 
-    # latest_tweets = []
-
     for user_id in ids:
         if not user_id or not str(user_id).isdigit():
             logging.warning(f"Skipping invalid ID: {user_id}")
             continue
-
+        print(f"Fetching tweets for user ID: {user_id}")
         try:
             tweets = get_user_tweets(user_id, max_results=5)  # Twitter API min=5
           
@@ -73,7 +71,7 @@ async def fetch_influencers_tweets() -> list:
 
                 if res.get("status") == "exists":
                     logging.info(f"Tweet already exists for {most_recent['username']}")
-                    return
+                    continue
                 else:
                     logging.info(f"New tweet found for {most_recent['username']}")
                     tweet_analysis_result = await tweet_analysis(most_recent)  # Analyze the tweet
@@ -103,7 +101,6 @@ async def combined_prediction_analysis():
         logging.debug("Completed combined predictions analysis")
 
         await save_combined_predictions(tweet_analysis)
-        logging.info("Successfully saved combined predictions")
 
     except Exception as e:
         logging.error(f"Error in combined_prediction_analysis: {e}", exc_info=True)
@@ -254,8 +251,6 @@ async def search_influencer(payload: InfluencerSearchRequest):
     except Exception as api_error:
         logging.error(f"Failed to fetch from X API for {username}: {api_error}")
         raise HTTPException(status_code=502, detail="Failed to fetch influencer from X API")
-
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)
