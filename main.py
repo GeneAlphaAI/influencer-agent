@@ -115,10 +115,10 @@ async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
 
     # Add jobs
-    scheduler.add_job(fetch_influencers_tweets, "interval", minutes=10)
+    scheduler.add_job(fetch_influencers_tweets, "interval", hours=4)
     logging.info("Scheduled: fetch_influencers_tweets every 4 hours")
 
-    scheduler.add_job(combined_prediction_analysis, "interval", minutes=15)
+    scheduler.add_job(combined_prediction_analysis, "interval", hours=12)
     logging.info("Scheduled: combined_prediction_analysis every 12 hours")
 
     # Start scheduler 
