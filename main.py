@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 from utils.mongo_service import  check_tweet_exists, create_or_update_user_with_agent, save_combined_predictions, get_all_unique_x_influencers_ids, get_all_users, get_influencer_account_by_username, get_last_24h_predicted_tweets, get_user_agents,save_account_info , save_tweet
-from utils.x_api import get_user_info, get_user_tweets
+from utils.x_api import get_token_price, get_user_info, get_user_tweets
 from utils.gpt_client import tweet_analysis, combined_predictions_analysis
 from datetime import datetime
 import logging
@@ -93,12 +93,21 @@ async def combined_prediction_analysis():
     """
     Analyze a tweet and generate a combined prediction.
     """
-    logging.info(f"Generating combined prediction")
-    tweets_data = await get_last_24h_predicted_tweets()
+    logging.info("Generating combined prediction")
 
-    tweet_analysis = await combined_predictions_analysis(tweets_data)
+    try:
+        tweets_data = await get_last_24h_predicted_tweets()
+        logging.debug(f"Fetched {len(tweets_data)} tweets for analysis")
 
-    await save_combined_predictions(tweet_analysis)
+        tweet_analysis = await combined_predictions_analysis(tweets_data)
+        logging.debug("Completed combined predictions analysis")
+
+        await save_combined_predictions(tweet_analysis)
+        logging.info("Successfully saved combined predictions")
+
+    except Exception as e:
+        logging.error(f"Error in combined_prediction_analysis: {e}", exc_info=True)
+       
    
 
 @app.on_event("startup")
@@ -245,6 +254,7 @@ async def search_influencer(payload: InfluencerSearchRequest):
     except Exception as api_error:
         logging.error(f"Failed to fetch from X API for {username}: {api_error}")
         raise HTTPException(status_code=502, detail="Failed to fetch influencer from X API")
+
 
 
 if __name__ == "__main__":

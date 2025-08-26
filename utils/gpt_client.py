@@ -218,7 +218,6 @@ async def process_gpt_completion(messages, tools, model=GPT_MODEL):
     Asynchronously process the GPT completion with the provided messages and tools.
     """
     try:
-        print(model)
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=model,
