@@ -44,6 +44,8 @@ class InfluencerSearchRequest(BaseModel):
     walletAddress: Optional[str] = None
 
 
+BATCH_SIZE = 10
+
 async def fetch_influencers_tweets() -> list:
     """
     Fetch only the most recent tweet for each influencer.
@@ -51,42 +53,56 @@ async def fetch_influencers_tweets() -> list:
     """
     ids = await get_all_unique_x_influencers_ids()
 
-    for idx, user_id in enumerate(ids):
-        if not user_id or not str(user_id).isdigit():
-            logging.warning(f"Skipping invalid ID: {user_id}")
-            continue
-        print(f"Fetching tweets for user ID: {user_id}")
-        try:
-            tweets = get_user_tweets(user_id, max_results=5)  # Twitter API min=5
-          
-            if tweets:
-                # Pick the most recent tweet for this account
-                tweets.sort(
-                    key=lambda t: datetime.fromisoformat(
-                        t["created_at"].replace("Z", "+00:00")
-                    ),
-                    reverse=True
-                )
-                most_recent = tweets[0]
-         
-                res = await check_tweet_exists(most_recent['username'], most_recent['id'])
+    for i in range(0, len(ids), BATCH_SIZE):
+        batch = ids[i:i+BATCH_SIZE]
 
-                if res.get("status") == "exists":
-                    logging.info(f"Tweet already exists for {most_recent['username']}")
-                    continue
-                else:
+        for user_id in batch:
+            if not user_id or not str(user_id).isdigit():
+                logging.warning(f"Skipping invalid ID: {user_id}")
+                continue
+
+            print(f"Fetching tweets for user ID: {user_id}")
+            try:
+                tweets, headers = get_user_tweets(user_id, max_results=5)
+
+                # Handle rate limits
+                remaining = int(headers.get("x-rate-limit-remaining", 1))
+                reset_time = int(headers.get("x-rate-limit-reset", time.time() + 900))
+
+                if tweets:
+                    tweets.sort(
+                        key=lambda t: datetime.fromisoformat(
+                            t["created_at"].replace("Z", "+00:00")
+                        ),
+                        reverse=True
+                    )
+                    most_recent = tweets[0]
+
+                    res = await check_tweet_exists(most_recent['username'], most_recent['id'])
+                    if res.get("status") == "exists":
+                        logging.info(f"Tweet already exists for {most_recent['username']}")
+                        continue
+
                     logging.info(f"New tweet found for {most_recent['username']}")
-                    tweet_analysis_result = await tweet_analysis(most_recent)  # Analyze the tweet
+                    tweet_analysis_result = await tweet_analysis(most_recent)
                     logging.info(f"Tweet analysis result: {tweet_analysis_result}")
                     await save_tweet(most_recent['username'], most_recent, tweet_analysis_result)
 
-            # Only sleep if this is not the last user
-            if idx < len(ids) - 1:
-                logging.info("Sleeping for 3 minutes to respect rate limits")
-                await asyncio.sleep(180)  # 3 minutes between requests (non-blocking)
+                # If we are out of requests, wait until reset
+                if remaining == 0:
+                    sleep_for = reset_time - int(time.time())
+                    logging.warning(f"Rate limit reached. Sleeping {sleep_for}s...")
+                    await asyncio.sleep(sleep_for)
 
-        except Exception as e:
-            logging.error(f"Error fetching tweets for ID {user_id}: {e}")
+            except Exception as e:
+                logging.error(f"Error fetching tweets for ID {user_id}: {e}")
+
+        # After finishing one batch, wait for the next 15-min window
+        if i + BATCH_SIZE < len(ids):
+            logging.info("Batch finished. Sleeping 15 minutes for next window...")
+            await asyncio.sleep(900)
+
+            
 
 async def combined_prediction_analysis():
     """
@@ -110,6 +126,7 @@ async def combined_prediction_analysis():
 @app.on_event("startup")
 async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
+    await fetch_influencers_tweets()
 
     # Add jobs
     scheduler.add_job(fetch_influencers_tweets, "interval", hours=1)
