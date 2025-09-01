@@ -7,11 +7,12 @@ import uvicorn
 from utils.mongo_service import  check_tweet_exists, create_or_update_user_with_agent, save_combined_predictions, get_all_unique_x_influencers_ids, get_all_users, get_influencer_account_by_username, get_last_24h_predicted_tweets, get_user_agents,save_account_info , save_tweet
 from utils.x_api import get_token_price, get_user_info, get_user_tweets
 from utils.gpt_client import tweet_analysis, combined_predictions_analysis
-from datetime import datetime
+from datetime import datetime, time
 import logging
 from typing import Optional
 from config import PORT, HOST, VERSION, Allowed_Origins
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 
 scheduler = AsyncIOScheduler()
 
@@ -50,7 +51,7 @@ async def fetch_influencers_tweets() -> list:
     """
     ids = await get_all_unique_x_influencers_ids()
 
-    for user_id in ids:
+    for idx, user_id in enumerate(ids):
         if not user_id or not str(user_id).isdigit():
             logging.warning(f"Skipping invalid ID: {user_id}")
             continue
@@ -61,12 +62,13 @@ async def fetch_influencers_tweets() -> list:
             if tweets:
                 # Pick the most recent tweet for this account
                 tweets.sort(
-                    key=lambda t: datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")),
+                    key=lambda t: datetime.fromisoformat(
+                        t["created_at"].replace("Z", "+00:00")
+                    ),
                     reverse=True
                 )
                 most_recent = tweets[0]
          
-                # latest_tweets.append(most_recent)
                 res = await check_tweet_exists(most_recent['username'], most_recent['id'])
 
                 if res.get("status") == "exists":
@@ -76,16 +78,15 @@ async def fetch_influencers_tweets() -> list:
                     logging.info(f"New tweet found for {most_recent['username']}")
                     tweet_analysis_result = await tweet_analysis(most_recent)  # Analyze the tweet
                     logging.info(f"Tweet analysis result: {tweet_analysis_result}")
-                    await save_tweet(most_recent['username'],most_recent,tweet_analysis_result)
+                    await save_tweet(most_recent['username'], most_recent, tweet_analysis_result)
+
+            # Only sleep if this is not the last user
+            if idx < len(ids) - 1:
+                logging.info("Sleeping for 3 minutes to respect rate limits")
+                await asyncio.sleep(180)  # 3 minutes between requests (non-blocking)
+
         except Exception as e:
             logging.error(f"Error fetching tweets for ID {user_id}: {e}")
-
-    # Sort across all accounts newest first
-    # latest_tweets.sort(
-    #     key=lambda t: datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")),
-    #     reverse=True
-    # )
-    # return latest_tweets
 
 async def combined_prediction_analysis():
     """
@@ -106,14 +107,13 @@ async def combined_prediction_analysis():
         logging.error(f"Error in combined_prediction_analysis: {e}", exc_info=True)
        
    
-
 @app.on_event("startup")
 async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
 
     # Add jobs
-    scheduler.add_job(fetch_influencers_tweets, "interval", hours=4)
-    logging.info("Scheduled: fetch_influencers_tweets every 4 hours")
+    scheduler.add_job(fetch_influencers_tweets, "interval", hours=1)
+    logging.info("Scheduled: fetch_influencers_tweets every 1 hour")
 
     scheduler.add_job(combined_prediction_analysis, "interval", hours=12)
     logging.info("Scheduled: combined_prediction_analysis every 12 hours")
