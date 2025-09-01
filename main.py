@@ -7,7 +7,8 @@ import uvicorn
 from utils.mongo_service import  check_tweet_exists, create_or_update_user_with_agent, save_combined_predictions, get_all_unique_x_influencers_ids, get_all_users, get_influencer_account_by_username, get_last_24h_predicted_tweets, get_user_agents,save_account_info , save_tweet
 from utils.x_api import get_token_price, get_user_info, get_user_tweets
 from utils.gpt_client import tweet_analysis, combined_predictions_analysis
-from datetime import datetime, time
+from datetime import datetime
+import time
 import logging
 from typing import Optional
 from config import PORT, HOST, VERSION, Allowed_Origins
