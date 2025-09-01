@@ -58,7 +58,6 @@ def get_user_tweets(user_id: str, max_results=5):
         for tweet in tweets:
             tweet["username"] = users.get(tweet["author_id"], None)
 
-            # If tweet has media, attach resolved URLs
             if "attachments" in tweet and "media_keys" in tweet["attachments"]:
                 media_urls = []
                 for key in tweet["attachments"]["media_keys"]:
@@ -71,16 +70,15 @@ def get_user_tweets(user_id: str, max_results=5):
                 if media_urls:
                     tweet["media_urls"] = media_urls
 
-        return tweets
+        return tweets, r.headers
 
-    except requests.exceptions.Timeout:
-        logging.error(f"Timeout fetching tweets for {user_id}")
     except requests.exceptions.RequestException as e:
         logging.error(f"Request failed for {user_id}: {e}")
     except Exception as e:
         logging.error(f"Unexpected error fetching tweets for {user_id}: {e}")
 
-    return []
+    return [], {}
+
 
 def get_token_price_binance(symbol: str) -> Optional[float]:
     """
