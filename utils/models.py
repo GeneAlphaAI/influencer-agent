@@ -64,7 +64,7 @@ class AccountModel(BaseModel):
 # -----------------------
 class AccountRefModel(BaseModel):
     username: str = Field(..., description="Twitter handle without @")
-    influence: int = Field(..., ge=0, le=100, description="Influence score (0-100)")
+    influence: float = Field(..., ge=0, le=100, description="Influence score (0-100)")
 
 class AgentModel(BaseModel):
     agent: str = Field(..., description="Name of the agent")
