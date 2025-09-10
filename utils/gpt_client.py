@@ -348,9 +348,9 @@ async def tweet_analysis(data):
             # Attempt 1: Simple cleanup
             try:
                 cleaned_response = response.strip()
-                # Remove markdown code blocks
-                cleaned_response = re.sub(r'\s*```$', '', cleaned_response, flags=re.IGNORECASE)
-                cleaned_response = cleaned_response.strip()
+                
+                if cleaned_response.endswith('```'):
+                        cleaned_response = cleaned_response[:-3].rstrip()
                 return json.loads(cleaned_response)
             except:
                 pass
@@ -375,8 +375,8 @@ async def tweet_analysis(data):
                 
                 # Clean the fixed response
                 fixed_response = fixed_response.strip()
-                fixed_response =  re.sub(r'\s*```$', '', fixed_response, flags=re.IGNORECASE)
-                fixed_response = fixed_response.strip()
+                if fixed_response.endswith('```'):
+                    fixed_response = fixed_response[:-3].strip()
                 
                 return json.loads(fixed_response)
                 
