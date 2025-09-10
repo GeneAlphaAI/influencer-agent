@@ -349,7 +349,7 @@ async def tweet_analysis(data):
             try:
                 cleaned_response = response.strip()
                 # Remove markdown code blocks
-                cleaned_response = re.sub(r'^```json\s*|\s*```$', '', cleaned_response, flags=re.IGNORECASE)
+                cleaned_response = re.sub(r'\s*```$', '', cleaned_response, flags=re.IGNORECASE)
                 cleaned_response = cleaned_response.strip()
                 return json.loads(cleaned_response)
             except:
@@ -375,7 +375,7 @@ async def tweet_analysis(data):
                 
                 # Clean the fixed response
                 fixed_response = fixed_response.strip()
-                fixed_response = re.sub(r'^```json\s*|\s*```$', '', fixed_response, flags=re.IGNORECASE)
+                fixed_response =  re.sub(r'\s*```$', '', fixed_response, flags=re.IGNORECASE)
                 fixed_response = fixed_response.strip()
                 
                 return json.loads(fixed_response)
