@@ -3,10 +3,11 @@ import logging
 from utils.db import db
 from utils.db import db
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from utils.models import CombinedPredictionModel, SummaryModel, UserModel, AccountModel, TweetModel, AccountRefModel,AgentModel
 from fastapi import HTTPException
 from pydantic import parse_obj_as
+from bson import ObjectId
 
 # -----------------------
 # USER FUNCTIONS
@@ -22,7 +23,7 @@ async def create_or_update_user_with_agent(data: dict):
         username = acc["username"].strip().lower()
         influence = acc["influence"]
 
-        # (Optional) Ensure account exists in accounts collection
+        # Ensure account exists in accounts collection
         db_account = await db.accounts.find_one({"username": username})
         if not db_account:
             raise ValueError(f"Account with username '{username}' not found in accounts collection")
@@ -32,7 +33,7 @@ async def create_or_update_user_with_agent(data: dict):
     existing_user = await db.users.find_one({"walletAddress": wallet})
 
     if not existing_user:
-        # 🚀 New user with agent
+        #  New user with agent
         new_user = UserModel(
             walletAddress=wallet,
             agents=[AgentModel(agent=agent_name, accounts=account_refs, categories=categories)]
@@ -40,11 +41,11 @@ async def create_or_update_user_with_agent(data: dict):
         await db.users.insert_one(new_user)
         return {"status": "created", "user": new_user}
 
-    # 🚨 Ensure agents list exists
+    #  Ensure agents list exists
     if "agents" not in existing_user or not isinstance(existing_user["agents"], list):
         existing_user["agents"] = []
 
-    # 🔍 Look for existing agent
+    #  Look for existing agent
     agent_found = False
     for agent in existing_user["agents"]:
         if agent["agent"] == agent_name:
@@ -62,7 +63,7 @@ async def create_or_update_user_with_agent(data: dict):
             agent["categories"] = list(existing_categories)
             break
 
-    # ➕ If agent not found, create one
+    # If agent not found, create one
     if not agent_found:
         existing_user["agents"].append(
             AgentModel(agent=agent_name, accounts=account_refs, categories=categories).dict()
@@ -70,6 +71,128 @@ async def create_or_update_user_with_agent(data: dict):
 
     await db.users.replace_one({"walletAddress": wallet}, existing_user)
     return {"status": "updated", "user": existing_user}
+
+async def update_user_agent(
+    wallet: str,
+    agent_name: str,
+    new_agent_name: Optional[str] = None,
+    add_accounts: Optional[List[dict]] = None,
+    remove_accounts: Optional[List[str]] = None,
+    update_influences: Optional[Dict[str, float]] = None,
+    categories: Optional[List[str]] = None
+  ):
+    wallet = wallet.strip()
+    if not wallet:
+        raise ValueError("walletAddress is required")
+
+    existing_user = await db.users.find_one({"walletAddress": wallet})
+    if not existing_user:
+        raise ValueError(f"User with walletAddress '{wallet}' not found")
+
+    agents = existing_user.get("agents", [])
+    if not isinstance(agents, list):
+        raise ValueError("No agents found for this user")
+
+    # find agent (exact match on stored agent name)
+    agent = next((a for a in agents if a.get("agent") == agent_name), None)
+    if not agent:
+        raise ValueError(f"Agent '{agent_name}' not found for this user")
+
+    # ensure accounts list exists
+    agent.setdefault("accounts", [])
+
+    existing_accounts = agent.get("accounts", [])
+    existing_usernames_set = {normalize_username(a.get("username", "")) for a in existing_accounts}
+
+    # --- Rename agent ---
+    if new_agent_name:
+        agent["agent"] = new_agent_name
+
+    # --- Add accounts ---
+    if add_accounts:
+        for acc in add_accounts:
+            username_raw = acc.get("username") if isinstance(acc, dict) else acc
+            username = normalize_username(username_raw)
+            if not username:
+                raise ValueError("Invalid username in add_accounts")
+
+            influence = acc.get("influence") if isinstance(acc, dict) else None
+            # validate account exists in accounts collection
+            db_account = await db.accounts.find_one({"username": username})
+            if not db_account:
+                raise ValueError(f"Account '{username}' not found in accounts collection")
+
+            if username not in existing_usernames_set:
+                agent.setdefault("accounts", []).append({"username": username, "influence": influence})
+                existing_usernames_set.add(username)
+
+    # --- Remove accounts ---
+    if remove_accounts:
+        to_remove_norm = {normalize_username(x if isinstance(x, str) else x.get("username")) for x in remove_accounts}
+        #
+        to_remove_norm = {u for u in to_remove_norm if u}
+        if to_remove_norm:
+            agent["accounts"] = [
+                a for a in agent.get("accounts", [])
+                if normalize_username(a.get("username")) not in to_remove_norm
+            ]
+
+    # --- Update influences ---
+    if update_influences:
+        normalized_updates = {normalize_username(k): v for k, v in update_influences.items()}
+        for acc in agent.get("accounts", []):
+            uname = normalize_username(acc.get("username"))
+            if uname in normalized_updates:
+                acc["influence"] = normalized_updates[uname]
+
+    # --- Merge categories ---
+    if categories:
+        existing_categories = set(agent.get("categories", []) or [])
+        existing_categories.update(categories)
+        agent["categories"] = list(existing_categories)
+
+    # Save 
+    await db.users.replace_one({"walletAddress": wallet}, existing_user)
+
+    return {"status": "updated", "user": serialize(existing_user)}
+
+async def delete_user_agent(wallet: str, agent_name: str):
+    """
+    Delete an agent from a user by wallet address.
+
+    Args:
+        wallet (str): User wallet address
+        agent_name (str): Name of the agent to delete
+    """
+    wallet = wallet.strip()
+    if not wallet:
+        raise ValueError("walletAddress is required")
+
+    existing_user = await db.users.find_one({"walletAddress": wallet})
+    if not existing_user:
+        raise ValueError(f"User with walletAddress '{wallet}' not found")
+
+    agents = existing_user.get("agents", [])
+    if not isinstance(agents, list) or not agents:
+        raise ValueError("No agents found for this user")
+
+    before_count = len(agents)
+
+    updated_agents = [a for a in agents if a.get("agent") != agent_name]
+
+    if len(updated_agents) == before_count:
+        raise ValueError(f"Agent '{agent_name}' not found for this user")
+        
+    # Save updated list
+    existing_user["agents"] = updated_agents
+    await db.users.replace_one({"walletAddress": wallet}, existing_user)
+
+    return {
+        "status": "deleted",
+        "wallet": wallet,
+        "agent": agent_name,
+        "remaining_agents": [a.get("agent") for a in updated_agents]
+    }
 
 async def get_user_agents(wallet: str) -> list:
     pipeline = [
@@ -194,6 +317,22 @@ async def get_all_users() -> List[UserModel]:
     
     # Validate & parse into Pydantic models
     return parse_obj_as(List[UserModel], users)
+
+def serialize(obj):
+    if isinstance(obj, list):
+        return [serialize(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: serialize(v) for k, v in obj.items()}
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    return obj
+
+def normalize_username(u: Any) -> str:
+    if not isinstance(u, str):
+        return ""
+    return u.strip().lower()
+    
+
 # -----------------------
 # ACCOUNT FUNCTIONS
 # -----------------------

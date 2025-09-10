@@ -6,7 +6,8 @@ from config import GPT_MODEL, tools, client
 from fastapi import HTTPException
 from utils.mongo_service import get_all_users
 from utils.x_api import get_token_price
-
+import re
+from typing import Dict, Any
 
 async def create_gpt_messages(data: dict):
     """
@@ -336,17 +337,68 @@ async def tweet_analysis(data):
             response = assistant_message.content
 
         if not response or response.strip() == "":
-            response = '{"is_prediction": false, "reason": "empty GPT response"}'
+            return {"is_prediction": False, "reason": "empty GPT response"}
 
+        # Try to parse the response
         try:
             return json.loads(response)
         except Exception as parse_err:
-            logging.error(f"Failed to parse GPT response: {response}, error: {parse_err}")
-            return {"raw_response": response, "parse_error": str(parse_err)}
+            logging.warning(f"Initial JSON parse failed, attempting fixes: {parse_err}")
+            
+            # Attempt 1: Simple cleanup
+            try:
+                cleaned_response = response.strip()
+                # Remove markdown code blocks
+                cleaned_response = re.sub(r'^```json\s*|\s*```$', '', cleaned_response, flags=re.IGNORECASE)
+                cleaned_response = cleaned_response.strip()
+                return json.loads(cleaned_response)
+            except:
+                pass
+            
+            # Attempt 2: Ask GPT to fix the JSON
+            try:
+                fix_messages = [
+                    {
+                        "role": "system",
+                        "content": """FIX THE JSON. Return ONLY valid JSON, nothing else. 
+                        Rules: 1. Escape quotes with \\", 2. No trailing commas, 3. All keys quoted, 
+                        """
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"Fix this JSON:\n\n{response}"
+                    }
+                ]
+                
+                fix_completion = await process_gpt_completion(fix_messages, tools=None)
+                fixed_response = fix_completion.choices[0].message.content
+                
+                # Clean the fixed response
+                fixed_response = fixed_response.strip()
+                fixed_response = re.sub(r'^```json\s*|\s*```$', '', fixed_response, flags=re.IGNORECASE)
+                fixed_response = fixed_response.strip()
+                
+                return json.loads(fixed_response)
+                
+            except Exception as fix_err:
+                logging.error(f"GPT fix also failed: {fix_err}")
+                
+                # Final fallback: Extract what we can
+                return {
+                    "is_prediction": False,
+                    "reason": "JSON parsing failed after multiple attempts",
+                    "parse_error": str(parse_err),
+                    "response_preview": response[:300] + '...' if len(response) > 300 else response
+                }
+
 
     except Exception as error:
         logging.error(f"Error processing user query: {error}", exc_info=True)
-        return {"error": str(error), "status": "failed"}
+        return {
+            "is_prediction": False,
+            "reason": f"Processing error: {str(error)}",
+            "status": "failed"
+        }
 
 
 async def combined_predictions_analysis(data):
