@@ -58,7 +58,7 @@ async def fetch_influencers_tweets() -> list:
             try:
                 tweets, headers = get_user_tweets(user_id, max_results=5)
 
-                # Handle rate limits
+                #  rate limits
                 remaining = int(headers.get("x-rate-limit-remaining", 1))
                 reset_time = int(headers.get("x-rate-limit-reset", time.time() + 900))
 
@@ -116,7 +116,7 @@ async def combined_prediction_analysis():
 @app.on_event("startup")
 async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
-    # await fetch_influencers_tweets()
+    await fetch_influencers_tweets()
 
     # Add jobs
     scheduler.add_job(fetch_influencers_tweets, "interval", hours=1)
@@ -130,10 +130,12 @@ async def startup_event():
         scheduler.start()
         logging.info("Scheduler started")
 
+
 @app.on_event("shutdown")
 async def shutdown_event():
     scheduler.shutdown()
     logging.info("Scheduler stopped")
+
 
 @app.post("/user/agent/create")
 async def create_user(request: Request):
