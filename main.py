@@ -4,7 +4,7 @@ from fastapi import Request, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-from utils.mongo_service import  check_tweet_exists, create_or_update_user_with_agent, save_combined_predictions, get_all_unique_x_influencers_ids, get_all_users, get_influencer_account_by_username, get_last_24h_predicted_tweets, get_user_agents,save_account_info , save_tweet
+from utils.mongo_service import  check_tweet_exists,update_user_agent, delete_user_agent, create_or_update_user_with_agent, save_combined_predictions, get_all_unique_x_influencers_ids, get_all_users, get_influencer_account_by_username, get_last_24h_predicted_tweets, get_user_agents,save_account_info , save_tweet
 from utils.x_api import get_token_price, get_user_info, get_user_tweets
 from utils.gpt_client import tweet_analysis, combined_predictions_analysis
 from datetime import datetime
@@ -33,17 +33,9 @@ app.add_middleware(
     allow_headers=["*"],  
 )
 
-class QueryRequest(BaseModel):
-    query: str
-    userId: str
-    groupId: str
-    username: str
-    groupname: str
-
 class InfluencerSearchRequest(BaseModel):
     username: str
     walletAddress: Optional[str] = None
-
 
 BATCH_SIZE = 10
 
@@ -101,9 +93,7 @@ async def fetch_influencers_tweets() -> list:
         # After finishing one batch, wait for the next 15-min window
         if i + BATCH_SIZE < len(ids):
             logging.info("Batch finished. Sleeping 15 minutes for next window...")
-            await asyncio.sleep(900)
-
-            
+            await asyncio.sleep(900)            
 
 async def combined_prediction_analysis():
     """
@@ -121,13 +111,12 @@ async def combined_prediction_analysis():
         await save_combined_predictions(tweet_analysis)
 
     except Exception as e:
-        logging.error(f"Error in combined_prediction_analysis: {e}", exc_info=True)
-       
+        logging.error(f"Error in combined_prediction_analysis: {e}", exc_info=True)   
    
 @app.on_event("startup")
 async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
-    await fetch_influencers_tweets()
+    # await fetch_influencers_tweets()
 
     # Add jobs
     scheduler.add_job(fetch_influencers_tweets, "interval", hours=1)
@@ -145,7 +134,6 @@ async def startup_event():
 async def shutdown_event():
     scheduler.shutdown()
     logging.info("Scheduler stopped")
-
 
 @app.post("/user/agent/create")
 async def create_user(request: Request):
@@ -195,6 +183,87 @@ async def create_user(request: Request):
         logging.error(f"Unexpected error: {error}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
+@app.put("/user/agent/update")
+async def update_user_agent_endpoint(request: Request):
+    """
+    Update an existing agent of a user by wallet address.
+    Expected JSON body example:
+    {
+      "wallet": "0x123...",
+      "agent_name": "AlphaAgent",
+      "new_agent_name": "SuperAlpha",          # optional
+      "add_accounts": [
+         {"username": "elonmusk", "influence": 80},
+         {"username": "nasa", "influence": 70}
+      ],                                    # optional
+      "remove_accounts": ["old_account"],    # optional
+      "update_influences": {"nasa": 75},     # optional
+      "categories": ["crypto", "stocks"]    # optional
+    }
+    """
+    try:
+        body = await request.json()
+        logging.info(f"Update User Agent Request: {body}")
+
+        wallet = body.get("wallet")
+        agent_name = body.get("agent_name")
+
+        if not wallet:
+            raise HTTPException(status_code=400, detail="wallet Address is required")
+        if not agent_name:
+            raise HTTPException(status_code=400, detail="agentName is required")
+
+        result = await update_user_agent(
+            wallet=wallet,
+            agent_name=agent_name,
+            new_agent_name=body.get("new_agent_name"),
+            add_accounts=body.get("add_accounts"),
+            remove_accounts=body.get("remove_accounts"),
+            update_influences=body.get("update_influences"),
+            categories=body.get("categories"),
+        )
+
+        return {
+            "status": "success",
+            "data": result
+        }
+
+    except ValueError as error:
+        logging.error(f"Invalid input: {error}")
+        raise HTTPException(status_code=400, detail=str(error))
+
+    except HTTPException:
+        raise  # Let FastAPI handle HTTPExceptions
+
+    except Exception as error:
+        logging.error(f"Unexpected error: {error}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@app.delete("/user/agent")
+async def delete_agent(wallet_address: str, agent_name: str):
+    """
+    Delete an agent from a user by wallet address using query parameters.
+    Example: /user/agent/delete?wallet_address=0x123...&agent_name=MyAgent
+    """
+    try:
+        wallet = wallet_address.strip()
+        agent_name = agent_name.strip()
+
+        if not wallet:
+            raise HTTPException(status_code=400, detail="walletAddress is required")
+        if not agent_name:
+            raise HTTPException(status_code=400, detail="agentName is required")
+
+        result = await delete_user_agent(wallet, agent_name)
+        return result
+
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except HTTPException:
+        raise
+    except Exception as error:
+        logging.error(f"Unexpected error: {error}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/user/agent/get")
 async def get_agents(walletAddress: str):
