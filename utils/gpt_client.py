@@ -138,7 +138,7 @@ async def create_combined_predictions_messages(data: dict):
         - currency
         - direction
         - confidence_score (0–1 scale)
-        - reasoning (clear justification using only the included influencers)
+        - reasoning (a concise justification)
         - supporting_influencers (list of kept influencers with account_name, influence_score, and their prediction)
 
     -------------------
@@ -151,12 +151,12 @@ async def create_combined_predictions_messages(data: dict):
         "agent_id": "agent_1",
         "user_wallet": "0x1234abcd5678ef90",
         "combined_prediction": {
-            "token": "PLTR",
-            "predicted_price": 170,
+            "token": "SOL",
+            "predicted_price": 200,
             "currency": "USD",
             "direction": "down",
             "confidence_score": 0.9,
-            "reasoning": "Both top-scoring influencers forecast PLTR decline toward 165–170, reinforcing a bearish outlook.",
+            "reasoning": "Provide combined pridection reasoning, **Don't mention the influence score/weight here**",
             "supporting_influencers": [
             {
                 "account_name": "incomesharks",
@@ -203,13 +203,8 @@ async def create_combined_predictions_messages(data: dict):
     }
     """
 
-
-
     messages = [{"role": "system", "content": system_prompt}]
-
-
     user_content = [{"type": "text", "text": f"Tweet Data: {data}"}]
-
     messages.append({"role": "user", "content": user_content})
 
     return messages

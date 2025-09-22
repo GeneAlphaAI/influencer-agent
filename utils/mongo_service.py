@@ -13,64 +13,65 @@ from bson import ObjectId
 # USER FUNCTIONS
 # -----------------------
 async def create_or_update_user_with_agent(data: dict):
-    wallet = data["walletAddress"]
-    agent_name = data["agentName"]
-    accounts = data.get("accounts", [])
-    categories = data.get("categories", [])
+    try:
+        wallet = data["walletAddress"]
+        agent_name = data["agentName"]
+        accounts = data.get("accounts", [])
+        categories = data.get("categories", [])
 
-    account_refs = []
-    for acc in accounts:
-        username = acc["username"].strip().lower()
-        influence = acc["influence"]
+        account_refs = []
+        for acc in accounts:
+            username = acc["username"].strip().lower()
+            influence = acc["influence"]
 
-        # Ensure account exists in accounts collection
-        db_account = await db.accounts.find_one({"username": username})
-        if not db_account:
-            raise ValueError(f"Account with username '{username}' not found in accounts collection")
+            # Ensure account exists in accounts collection
+            db_account = await db.accounts.find_one({"username": username})
+            if not db_account:
+                raise ValueError(
+                    f"Account with username '{username}' not found in accounts collection"
+                )
 
-        account_refs.append({"username": username, "influence": influence})
+            account_refs.append({"username": username, "influence": influence})
 
-    existing_user = await db.users.find_one({"walletAddress": wallet})
+        existing_user = await db.users.find_one({"walletAddress": wallet})
 
-    if not existing_user:
-        #  New user with agent
-        new_user = UserModel(
-            walletAddress=wallet,
-            agents=[AgentModel(agent=agent_name, accounts=account_refs, categories=categories)]
-        ).dict()
-        await db.users.insert_one(new_user)
-        return {"status": "created", "user": new_user}
+        if not existing_user:
+            # New user with agent
+            new_user = UserModel(
+                walletAddress=wallet,
+                agents=[AgentModel(agent=agent_name, accounts=account_refs, categories=categories)],
+            ).dict()
+            await db.users.insert_one(new_user)
+            return {"status": "created", "user": sanitize_document(new_user)}
 
-    #  Ensure agents list exists
-    if "agents" not in existing_user or not isinstance(existing_user["agents"], list):
-        existing_user["agents"] = []
+        # Ensure agents list exists
+        if "agents" not in existing_user or not isinstance(existing_user["agents"], list):
+            existing_user["agents"] = []
 
-    #  Look for existing agent
-    agent_found = False
-    for agent in existing_user["agents"]:
-        if agent["agent"] == agent_name:
-            agent_found = True
+        # Prevent duplicate agent names
+        for agent in existing_user["agents"]:
+            if agent["agent"] == agent_name:
+                raise ValueError(
+                    f"Agent '{agent_name}' already exists for user with wallet '{wallet}'"
+                )
 
-            # Merge accounts by username
-            existing_usernames = {a["username"] for a in agent.get("accounts", [])}
-            for acc in account_refs:
-                if acc["username"] not in existing_usernames:
-                    agent.setdefault("accounts", []).append(acc)
-
-            # Merge categories
-            existing_categories = set(agent.get("categories", []))
-            existing_categories.update(categories)
-            agent["categories"] = list(existing_categories)
-            break
-
-    # If agent not found, create one
-    if not agent_found:
+        # If agent not found, add one
         existing_user["agents"].append(
             AgentModel(agent=agent_name, accounts=account_refs, categories=categories).dict()
         )
 
-    await db.users.replace_one({"walletAddress": wallet}, existing_user)
-    return {"status": "updated", "user": existing_user}
+        await db.users.replace_one({"walletAddress": wallet}, existing_user)
+        return {"status": "updated", "user": sanitize_document(existing_user)}
+
+    except ValueError as ve:
+        # Business validation error
+        logging.error(f"Validation error in create_or_update_user_with_agent: {ve}")
+        raise
+
+    except Exception as e:
+        # Catch-all for unexpected errors
+        logging.exception("Unexpected error in create_or_update_user_with_agent")
+        raise RuntimeError("Failed to create or update user with agent") from e
 
 async def update_user_agent(
     wallet: str,
@@ -154,7 +155,7 @@ async def update_user_agent(
     # Save 
     await db.users.replace_one({"walletAddress": wallet}, existing_user)
 
-    return {"status": "updated", "user": serialize(existing_user)}
+    return sanitize_document(existing_user)
 
 async def delete_user_agent(wallet: str, agent_name: str):
     """
@@ -188,9 +189,6 @@ async def delete_user_agent(wallet: str, agent_name: str):
     await db.users.replace_one({"walletAddress": wallet}, existing_user)
 
     return {
-        "status": "deleted",
-        "wallet": wallet,
-        "agent": agent_name,
         "remaining_agents": [a.get("agent") for a in updated_agents]
     }
 
@@ -211,18 +209,27 @@ async def get_user_agents(wallet: str) -> list:
         },
         {"$unwind": {"path": "$agents.accounts.account_info", "preserveNullAndEmptyArrays": True}},
 
-        # lookup tweets
+        # lookup tweets (respect agent.created_at if present)
         {
             "$lookup": {
                 "from": "tweets",
-                "let": {"uname": "$agents.accounts.username"},
+                "let": {
+                    "uname": "$agents.accounts.username",
+                    "agent_created_at": "$agents.created_at"
+                },
                 "pipeline": [
                     {
                         "$match": {
                             "$expr": {
                                 "$and": [
                                     {"$eq": [{"$toLower": "$account_name"}, {"$toLower": "$$uname"}]},
-                                    {"$eq": ["$prediction", True]}
+                                    {"$eq": ["$prediction", True]},
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$$agent_created_at", None]},  # agent has no created_at
+                                            {"$gte": ["$created_at", "$$agent_created_at"]}  # only newer tweets
+                                        ]
+                                    }
                                 ]
                             }
                         }
@@ -234,8 +241,6 @@ async def get_user_agents(wallet: str) -> list:
             }
         },
 
-        # keep only accounts with predictions
-        {"$match": {"agents.accounts.tweets.0": {"$exists": True}}},
 
         # group back by agent
         {
@@ -243,7 +248,8 @@ async def get_user_agents(wallet: str) -> list:
                 "_id": {
                     "agent": "$agents.agent",
                     "categories": "$agents.categories",
-                    "predictions": "$agents.predictions"
+                    "predictions": "$agents.predictions",
+                    "created_at": "$agents.created_at"
                 },
                 "accounts": {"$push": "$agents.accounts"}
             }
@@ -282,14 +288,20 @@ async def get_user_agents(wallet: str) -> list:
                 "agent": "$_id.agent",
                 "categories": "$_id.categories",
                 "predictions": "$_id.predictions",
+                "created_at": "$_id.created_at",
                 "accounts": 1,
-                "combined_prediction": {"$arrayElemAt": ["$combined_predictions", 0]}  # single object instead of array
+                "combined_prediction": {"$arrayElemAt": ["$combined_predictions", 0]}
             }
         }
     ]
 
     cursor = db.users.aggregate(pipeline)
-    return await cursor.to_list(length=None)
+    results = await cursor.to_list(length=None)
+
+    if not results:
+        raise ValueError(f"Wallet not exists")
+
+    return results
 
 async def get_all_unique_accounts_from_all_users() -> list:
     """
@@ -332,7 +344,21 @@ def normalize_username(u: Any) -> str:
         return ""
     return u.strip().lower()
     
-
+def sanitize_document(doc):
+    """
+    Recursively sanitize MongoDB documents for JSON serialization:
+    - Converts ObjectId to str
+    - Converts datetime to ISO string
+    """
+    if isinstance(doc, list):
+        return [sanitize_document(d) for d in doc]
+    if isinstance(doc, dict):
+        return {k: sanitize_document(v) for k, v in doc.items()}
+    if isinstance(doc, ObjectId):
+        return str(doc)
+    if isinstance(doc, datetime):
+        return doc.isoformat()
+    return doc
 # -----------------------
 # ACCOUNT FUNCTIONS
 # -----------------------
