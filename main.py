@@ -335,7 +335,7 @@ async def search_influencer(payload: InfluencerSearchRequest):
             logging.info(f"Influencer found in DB: {username}")
             return {
             "status": "success",
-            "data": {"source": "database", "data": influencer_doc.dict()},
+            "data": influencer_doc.dict(),
             "messsage": "influencer fetched successfully",
             "error": None
             }
@@ -360,7 +360,7 @@ async def search_influencer(payload: InfluencerSearchRequest):
 
         return {
             "status": "success",
-            "data":{"source": "x_api", "data": user_info},
+            "data": user_info,
             "messsage": "influencer fetched successfully",
             "error": None
         }
