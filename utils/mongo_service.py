@@ -226,8 +226,8 @@ async def get_user_agents(wallet: str) -> list:
                                     {"$eq": ["$prediction", True]},
                                     {
                                         "$or": [
-                                            {"$eq": ["$$agent_created_at", None]},  # agent has no created_at
-                                            {"$gte": ["$created_at", "$$agent_created_at"]}  # only newer tweets
+                                            {"$eq": ["$$agent_created_at", None]},
+                                            {"$gte": ["$created_at", "$$agent_created_at"]}
                                         ]
                                     }
                                 ]
@@ -240,7 +240,6 @@ async def get_user_agents(wallet: str) -> list:
                 "as": "agents.accounts.tweets"
             }
         },
-
 
         # group back by agent
         {
@@ -255,27 +254,34 @@ async def get_user_agents(wallet: str) -> list:
             }
         },
 
-        # lookup combined predictions for this agent + wallet
+        # lookup combined predictions (respect agent.created_at if present)
         {
             "$lookup": {
                 "from": "combined_predictions",
                 "let": {
                     "agent_name": "$_id.agent",
-                    "user_wallet": wallet
+                    "user_wallet": wallet,
+                    "agent_created_at": "$_id.created_at"
                 },
                 "pipeline": [
                     {
                         "$match": {
                             "$expr": {
                                 "$and": [
-                                    {"$eq": ["$agent_id", "$$agent_name"]},   
-                                    {"$eq": ["$user_wallet", "$$user_wallet"]}
+                                    {"$eq": ["$agent_id", "$$agent_name"]},
+                                    {"$eq": ["$user_wallet", "$$user_wallet"]},
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$$agent_created_at", None]},
+                                            {"$gte": ["$created_at", "$$agent_created_at"]}
+                                        ]
+                                    }
                                 ]
                             }
                         }
                     },
                     {"$sort": {"created_at": -1}},
-                    {"$limit": 1},   
+                    {"$limit": 1},
                     {"$project": {"_id": 0}}
                 ],
                 "as": "combined_predictions"
