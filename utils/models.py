@@ -70,6 +70,7 @@ class AgentModel(BaseModel):
     agent: str = Field(..., description="Name of the agent")
     accounts: List[AccountRefModel] = Field(default_factory=list, description="Accounts linked to the agent")
     categories: List[str] = Field(default_factory=list, description="Interest categories like ['crypto', 'stocks']")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class UserModel(BaseModel):
     walletAddress: str = Field(..., description="User's wallet address")

@@ -1,5 +1,4 @@
-from unittest import result
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from fastapi import Request, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,7 +9,7 @@ from utils.gpt_client import tweet_analysis, combined_predictions_analysis
 from datetime import datetime
 import time
 import logging
-from typing import Optional
+from typing import Optional,Any
 from config import PORT, HOST, VERSION, Allowed_Origins
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import asyncio
@@ -23,7 +22,6 @@ app = FastAPI(
     version=VERSION
 )
 
-
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +30,12 @@ app.add_middleware(
     allow_methods=["*"],  
     allow_headers=["*"],  
 )
+
+class APIResponse(BaseModel):
+    status: str  # "success" | "error"
+    data: Optional[Any] = None
+    message: str
+    error: Optional[str] = None
 
 class InfluencerSearchRequest(BaseModel):
     username: str
@@ -103,21 +107,44 @@ async def combined_prediction_analysis():
 
     try:
         tweets_data = await get_last_24h_predicted_tweets()
-        logging.debug(f"Fetched {len(tweets_data)} tweets for analysis")
+        logging.info(f"Fetched {len(tweets_data)} tweets for analysis")
 
         tweet_analysis = await combined_predictions_analysis(tweets_data)
-        logging.debug("Completed combined predictions analysis")
+        logging.info("Completed combined predictions analysis")
+        print(tweet_analysis)
 
         await save_combined_predictions(tweet_analysis)
 
     except Exception as e:
         logging.error(f"Error in combined_prediction_analysis: {e}", exc_info=True)   
    
+def success_response(data: Any = None, message: str = "OK", http_code: int = 200):
+    return JSONResponse(
+        status_code=http_code,
+        content=APIResponse(
+            status="success",
+            data=data,
+            message=message,
+            error=None,
+        ).dict()
+    )
+
+def error_response(message: str, error: str = "BadRequest", http_code: int = 400):
+    return JSONResponse(
+        status_code=http_code,
+        content=APIResponse(
+            status="error",
+            data=None,
+            message=message,
+            error=error,
+        ).dict()
+    )
+
 @app.on_event("startup")
 async def startup_event():
     logging.info(f"Running on server. App version is {VERSION}")
-    await fetch_influencers_tweets()
-
+    # await fetch_influencers_tweets()
+    # await combined_prediction_analysis()
     # Add jobs
     scheduler.add_job(fetch_influencers_tweets, "interval", hours=1)
     logging.info("Scheduled: fetch_influencers_tweets every 1 hour")
@@ -130,27 +157,15 @@ async def startup_event():
         scheduler.start()
         logging.info("Scheduler started")
 
-
 @app.on_event("shutdown")
 async def shutdown_event():
     scheduler.shutdown()
     logging.info("Scheduler stopped")
 
-
-@app.post("/user/agent/create")
+@app.post("/user/agent/create", response_model=APIResponse)
 async def create_user(request: Request):
     """
     Create or update a user and link Twitter accounts to their wallet.
-    Expected JSON body:
-    {
-      "walletAddress": "0x123...",
-      "agentName": "MyAgent",
-      "accounts": [
-         {"username": "elonmusk", "name": "Elon Musk", "influence": 80},
-         {"username": "nasa", "name": "NASA", "influence": 70}
-      ],
-      "categories": ["crypto", "stocks"]
-    }
     """
     try:
         body = await request.json()
@@ -160,30 +175,26 @@ async def create_user(request: Request):
         accounts = body.get("accounts", [])
 
         if not wallet:
-            raise HTTPException(status_code=400, detail="walletAddress is required")
+            return error_response("walletAddress is required", error="ValidationError", http_code=400)
         if not isinstance(accounts, list):
-            raise HTTPException(status_code=400, detail="accounts must be a list")
+            return error_response("accounts must be a list", error="ValidationError", http_code=400)
 
-        await create_or_update_user_with_agent(body)
-        # result = get_user_info("elonmusk")
-        # print(result)
-        return {
-            "status": "success",
-            "wallet": wallet,
-            "linked_accounts": accounts
-        }
+        result = await create_or_update_user_with_agent(body)
+
+        return success_response(
+            data={"wallet": wallet, "user": result["user"]},
+            message=f"User {result['status']} successfully"
+        )
 
     except ValueError as error:
-        logging.error(f"Invalid JSON: {error}")
-        raise HTTPException(status_code=400, detail="Invalid Input")
-
-    except HTTPException:
-        logging.error(f"HTTP Exception: {error}")
-        raise  # Let FastAPI handle HTTPExceptions
+        # Business logic errors (e.g., agent already exists, account not found)
+        logging.error(f"Validation error: {error}")
+        return error_response(str(error), error="Conflict", http_code=409)
 
     except Exception as error:
-        logging.error(f"Unexpected error: {error}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        # Unexpected errors
+        logging.exception("Unexpected error occurred")
+        return error_response("Internal Server Error", error="ServerError", http_code=500)
 
 @app.put("/user/agent/update")
 async def update_user_agent_endpoint(request: Request):
@@ -225,21 +236,20 @@ async def update_user_agent_endpoint(request: Request):
             categories=body.get("categories"),
         )
 
-        return {
-            "status": "success",
-            "data": result
-        }
 
+        return success_response(
+            data= result,
+            message=f"User Updated successfully"
+        )
     except ValueError as error:
-        logging.error(f"Invalid input: {error}")
-        raise HTTPException(status_code=400, detail=str(error))
-
-    except HTTPException:
-        raise  # Let FastAPI handle HTTPExceptions
+        # Business logic errors (e.g., agent already exists, account not found)
+        logging.error(f"Validation error: {error}")
+        return error_response(str(error), error="Conflict", http_code=409)
 
     except Exception as error:
-        logging.error(f"Unexpected error: {error}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        # Unexpected errors
+        logging.exception("Unexpected error occurred")
+        return error_response("Internal Server Error", error="ServerError", http_code=500)
 
 @app.delete("/user/agent")
 async def delete_agent(wallet_address: str, agent_name: str):
@@ -257,15 +267,20 @@ async def delete_agent(wallet_address: str, agent_name: str):
             raise HTTPException(status_code=400, detail="agentName is required")
 
         result = await delete_user_agent(wallet, agent_name)
-        return result
+
+        # return result
+        return success_response(
+            data= result,
+            message=f"agent deleted successfully"
+        )
 
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    except HTTPException:
-        raise
+        logging.error(f"Validation error: {error}")
+        return error_response(str(error), error="Conflict", http_code=409)
+
     except Exception as error:
-        logging.error(f"Unexpected error: {error}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        logging.exception("Unexpected error occurred")
+        return error_response("Internal Server Error", error="ServerError", http_code=500)
 
 @app.get("/user/agent/get")
 async def get_agents(walletAddress: str):
@@ -286,15 +301,18 @@ async def get_agents(walletAddress: str):
 
         return {
             "status": "success",
-            "wallet": walletAddress,
-            "agents": agents
+            "data": agents,
+            "messsage": "User agents fetched successfully",
+            "error": None
         }
-
-    except HTTPException:
-        raise
-    except Exception as error:
+    except ValueError as error:
         logging.error(f"Error retrieving agents for wallet {walletAddress}: {error}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        return error_response(str(error), error="Conflict", http_code=409)
+
+    except Exception as error:
+        # Unexpected errors
+        logging.exception("Unexpected error occurred")
+        return error_response("Internal Server Error", error="ServerError", http_code=500)
 
 @app.post("/influencer/search")
 async def search_influencer(payload: InfluencerSearchRequest):
@@ -315,11 +333,16 @@ async def search_influencer(payload: InfluencerSearchRequest):
         print(f"Influencer found in DB: {influencer_doc}")
         if influencer_doc:
             logging.info(f"Influencer found in DB: {username}")
-            return {"status": "success", "source": "database", "data": influencer_doc.dict()}
+            return {
+            "status": "success",
+            "data": {"source": "database", "data": influencer_doc.dict()},
+            "messsage": "influencer fetched successfully",
+            "error": None
+            }
 
     except Exception as db_error:
         logging.error(f"Database lookup failed for {username}: {db_error}")
-        raise HTTPException(status_code=500, detail="Database error during lookup")
+        return error_response("Database error during lookup", error="ServerError", http_code=500)
 
     # 2. If not in DB, fetch from X API
     try:
@@ -335,11 +358,18 @@ async def search_influencer(payload: InfluencerSearchRequest):
         # Save to MongoDB
         await save_account_info(user_info)
 
-        return {"status": "success", "source": "x_api", "data": user_info}
-
-    except Exception as api_error:
-        logging.error(f"Failed to fetch from X API for {username}: {api_error}")
-        raise HTTPException(status_code=502, detail="Failed to fetch influencer from X API")
+        return {
+            "status": "success",
+            "data":{"source": "x_api", "data": user_info},
+            "messsage": "influencer fetched successfully",
+            "error": None
+        }
+    except ValueError as error:
+        logging.error(f"Failed to fetch from X API for {username}: {error}")
+        return error_response(str(error), error="Conflict", http_code=409)
+    except Exception as error:
+        logging.exception("Unexpected error occurred")
+        return error_response("Internal Server Error", error="ServerError", http_code=500)
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)
